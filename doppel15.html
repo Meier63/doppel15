@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1412">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Doppel 15">
+<title>Doppel 15</title>
+<script>
+// App-Symbol und Offline-Start nur, wenn das Spiel über eine Webadresse läuft (nicht per Doppelklick).
+if (/^https?:$/.test(location.protocol)) {
+  [['manifest', 'manifest.json'], ['apple-touch-icon', 'apple-touch-icon.png'], ['icon', 'icon-192.png']].forEach(([rel, href]) => {
+    const l = document.createElement('link');
+    l.rel = rel;
+    l.href = href;
+    document.head.appendChild(l);
+  });
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+}
+</script>
+<style>
+:root {
+  --bg: #0f1412;
+  --karte: #18211c;
+  --karte2: #222d27;
+  --linie: #2f3e36;
+  --text: #f3f6f4;
+  --grau: #9db0a6;
+  --gruen: #22a45d;
+  --gruen-d: #1a7f48;
+  --rot: #e04848;
+  --gelb: #f2c230;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 18px;
+  line-height: 1.4;
+}
+button, input, select { font: inherit; color: inherit; }
+
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bg);
+  border-bottom: 1px solid var(--linie);
+  padding-top: env(safe-area-inset-top);
+}
+.kopf { display: flex; align-items: center; gap: 12px; max-width: 1100px; margin: 0 auto; padding: 8px 16px; }
+.logo { font-weight: 800; font-size: 22px; white-space: nowrap; }
+.logo span { color: var(--rot); }
+nav { display: flex; gap: 4px; margin-left: auto; overflow-x: auto; }
+nav button {
+  background: none; border: 0; padding: 10px 14px; border-radius: 10px;
+  color: var(--grau); font-weight: 600; cursor: pointer; position: relative; white-space: nowrap;
+}
+nav button.aktiv { background: var(--karte2); color: var(--text); }
+nav .punkt { position: absolute; top: 6px; right: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--gelb); }
+@media (max-width: 560px) {
+  .logo { display: none; }
+  nav { margin-left: 0; width: 100%; justify-content: space-between; }
+  nav button { flex: 1; padding: 10px 4px; font-size: 16px; }
+}
+
+main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 48px; }
+.karte { background: var(--karte); border: 1px solid var(--linie); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+h2 { font-size: 20px; margin: 0 0 12px; }
+.grau { color: var(--grau); }
+.hinweis { color: var(--grau); font-size: 15px; margin: 10px 0 0; }
+.warnung { color: var(--gelb); }
+.ok { color: #6fdc9c; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px; padding: 10px 18px; border-radius: 12px;
+  border: 1px solid var(--linie); background: var(--karte2);
+  font-weight: 600; cursor: pointer; touch-action: manipulation;
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.btn:active { transform: scale(.97); }
+.btn.primaer { background: var(--gruen); border-color: var(--gruen); color: #fff; }
+.btn.gefahr { background: transparent; border-color: #6b2c2c; color: #ff8a8a; }
+.btn.klein { min-height: 42px; padding: 6px 12px; font-size: 16px; }
+.btn.an { background: var(--gruen-d); border-color: #3ccf7f; color: #fff; }
+.btn.gross { width: 100%; min-height: 72px; font-size: 22px; }
+.btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+.zeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.zeile.mitte { justify-content: center; }
+.zeile.abstand { margin-top: 12px; }
+
+input[type=text], input[type=number], input[type=date], select {
+  background: var(--karte2); border: 1px solid var(--linie); border-radius: 10px;
+  padding: 10px 12px; min-height: 52px;
+}
+input[type=text] { flex: 1; min-width: 180px; }
+input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--gruen); }
+label { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Einrichtung */
+.raster-felder { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.raster-felder .btn { min-height: 58px; padding: 6px; font-size: 20px; }
+@media (max-width: 560px) {
+  .raster-felder { grid-template-columns: repeat(5, 1fr); }
+  .raster-felder .bull { grid-column: 1 / -1; }
+}
+.zahl { display: inline-flex; align-items: center; gap: 6px; }
+.zahl input { width: 90px; text-align: center; font-size: 22px; font-weight: 700; }
+.zahl .btn { width: 52px; font-size: 26px; padding: 0; }
+
+/* Laufendes Training */
+.anzeige { text-align: center; }
+.anzeige .info { font-size: clamp(18px, 3.6vw, 26px); color: var(--grau); }
+.anzeige .feld { font-size: clamp(76px, 20vw, 170px); font-weight: 800; line-height: 1.05; color: var(--gelb); }
+.anzeige .stand { font-size: clamp(26px, 6vw, 46px); font-weight: 700; margin: 4px 0 10px; }
+.anzeige .quote-gross { font-size: clamp(56px, 14vw, 110px); font-weight: 800; color: var(--gelb); line-height: 1.1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.chip { min-width: 38px; padding: 4px 10px; border-radius: 999px; background: var(--karte2); border: 1px solid var(--linie); font-weight: 700; }
+.chip.leer { color: #4c5d54; }
+.chip.t0 { color: var(--grau); }
+.chip.t1, .chip.t2, .chip.t3 { color: #6fdc9c; border-color: var(--gruen-d); }
+.frage { text-align: center; font-size: 20px; color: var(--grau); margin-top: 8px; }
+.treffer-knoepfe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 12px 0 16px; }
+.treffer-knoepfe .btn { min-height: clamp(96px, 22vh, 190px); font-size: clamp(46px, 11vw, 88px); font-weight: 800; }
+.treffer-knoepfe .t0 { background: #2a1f1f; border-color: #5a3434; }
+.treffer-knoepfe .t1 { background: #1b3326; border-color: #2c6b48; }
+.treffer-knoepfe .t2 { background: #1a4a30; border-color: #2f8c57; }
+.treffer-knoepfe .t3 { background: #1d6b40; border-color: #3ccf7f; }
+
+/* Statistik */
+.kacheln { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 640px) { .kacheln { grid-template-columns: repeat(2, 1fr); } }
+.kachel { background: var(--karte); border: 1px solid var(--linie); border-radius: var(--radius); padding: 14px 8px; text-align: center; }
+.kachel b { display: block; font-size: clamp(24px, 5vw, 32px); }
+.kachel span { color: var(--grau); font-size: 15px; }
+.karte .kacheln { margin-bottom: 0; }
+.karte .kachel { background: var(--karte2); }
+.segment { display: flex; flex-wrap: wrap; gap: 6px; }
+.tabelle { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 9px 8px; text-align: left; border-bottom: 1px solid var(--linie); vertical-align: middle; }
+th { color: var(--grau); font-weight: 600; font-size: 15px; }
+td.z, th.z { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.feldname { font-weight: 700; white-space: nowrap; }
+td.detail { color: var(--grau); font-size: 15px; letter-spacing: .5px; }
+tr.leer td { color: #5d6f65; }
+.balken { height: 14px; background: var(--karte2); border-radius: 7px; overflow: hidden; min-width: 70px; }
+.balken i { display: block; height: 100%; border-radius: 7px; }
+td.b { width: 32%; }
+@media (max-width: 560px) {
+  th, td { padding: 9px 4px; }
+  .balken { min-width: 32px; }
+}
+.kopfzeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.kopfzeile h2 { margin: 0; }
+
+/* Spieler */
+.spieler-zeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--linie); }
+.spieler-zeile:last-child { border-bottom: 0; }
+.spieler-zeile b { font-size: 20px; }
+
+/* Dialog und Meldung */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; }
+.dialog { background: var(--karte); border: 1px solid var(--linie); border-radius: var(--radius); padding: 20px; max-width: 480px; width: 100%; }
+.dialog p { margin: 0 0 16px; white-space: pre-line; }
+.dialog input { width: 100%; margin-bottom: 16px; }
+.dialog .zeile { justify-content: flex-end; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: var(--karte2); border: 1px solid var(--linie); padding: 12px 18px; border-radius: 12px;
+  z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: calc(100% - 32px);
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="kopf">
+    <div class="logo">Doppel <span>15</span></div>
+    <nav id="nav"></nav>
+  </div>
+</header>
+<main id="main"></main>
+<input type="file" id="dateiInput" accept=".txt,text/plain" hidden>
+
+<script>
+'use strict';
+
+// ---------- Grundlagen ----------
+
+const VERSION = 1;                       // Datenformat der txt-Datei
+const DATEINAME = 'doppel15-daten.txt';
+const LS = {
+  daten: 'doppel15.daten',
+  lauf: 'doppel15.lauf',
+  einst: 'doppel15.einstellung',
+  stat: 'doppel15.statistik',
+  meta: 'doppel15.meta'
+};
+const FELDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25]; // 25 = Bull
+const WOCHENTAGE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const fsApi = typeof window.showSaveFilePicker === 'function';
+
+const feldName = f => (f === 25 ? 'Bull' : 'D' + f);
+const pad = n => String(n).padStart(2, '0');
+const fmtDatum = d => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+const fmtZeit = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const zahl = n => n.toLocaleString('de-DE');
+const pct = q => (q == null ? '–' : (q * 100).toFixed(1).replace('.', ',') + ' %');
+const neueId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- Speicher im Browser ----------
+
+let speicherOk = true;
+function lsLesen(k) {
+  try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null; }
+  catch (e) { speicherOk = false; return null; }
+}
+function lsSchreiben(k, v) {
+  try {
+    if (v == null) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(v));
+  } catch (e) { speicherOk = false; }
+}
+
+// Prüft und bereinigt geladene Daten (aus Browser oder txt-Datei).
+function normalisieren(o) {
+  if (!o || typeof o !== 'object') return null;
+  const spieler = (Array.isArray(o.spieler) ? o.spieler : [])
+    .filter(s => s && s.id && typeof s.name === 'string')
+    .map(s => ({ id: String(s.id), name: s.name.trim() || '?', angelegt: s.angelegt || new Date().toISOString() }));
+  const ids = new Set(spieler.map(s => s.id));
+  const trainings = (Array.isArray(o.trainings) ? o.trainings : [])
+    .filter(t => t && t.id && ids.has(String(t.spieler)) && FELDER.includes(Number(t.feld)) &&
+                 Array.isArray(t.treffer) && t.treffer.length && !isNaN(Date.parse(t.datum)))
+    .map(t => ({
+      id: String(t.id),
+      runde: String(t.runde || t.id),
+      spieler: String(t.spieler),
+      feld: Number(t.feld),
+      datum: t.datum,
+      treffer: t.treffer.map(n => Math.max(0, Math.min(3, Math.round(Number(n) || 0))))
+    }));
+  trainings.sort((a, b) => Date.parse(a.datum) - Date.parse(b.datum));
+  return { spieler, trainings };
+}
+
+let daten = normalisieren(lsLesen(LS.daten)) || { spieler: [], trainings: [] };
+let meta = Object.assign({ ungesichert: false, letzteDatei: null, dateiName: null }, lsLesen(LS.meta) || {});
+let einst = Object.assign({ spieler: null, felder: [20], durchgaenge: 5, reihenfolge: 'auf' }, lsLesen(LS.einst) || {});
+let statF = Object.assign({ spieler: 'alle', zeitraum: 'monat', von: '', bis: '', gruppe: 'tag', sort: 'feld', alle: false }, lsLesen(LS.stat) || {});
+let lauf = lsLesen(LS.lauf);             // laufendes Training
+let ansicht = 'training';
+let dateiHandle = null;                  // nur Chrome/Edge: gewählte txt-Datei
+let autoDatei = false;
+let schreibKette = Promise.resolve();
+
+function datenGeaendert() {
+  lsSchreiben(LS.daten, daten);
+  meta.ungesichert = true;
+  lsSchreiben(LS.meta, meta);
+  if (autoDatei && dateiHandle) {
+    const h = dateiHandle;
+    schreibKette = schreibKette.then(() => inDateiSchreiben(h, true));
+  }
+}
+const laufSpeichern = () => lsSchreiben(LS.lauf, lauf);
+const einstSpeichern = () => lsSchreiben(LS.einst, einst);
+const statSpeichern = () => lsSchreiben(LS.stat, statF);
+
+const spielerName = id => (daten.spieler.find(s => s.id === id) || { name: '?' }).name;
+
+function summe(liste) {
+  let dg = 0, t = 0;
+  for (const r of liste) { dg += r.treffer.length; for (const n of r.treffer) t += n; }
+  return { dg, darts: dg * 3, treffer: t, quote: dg ? t / (dg * 3) : null };
+}
+
+function balken(q) {
+  const w = q == null ? 0 : Math.round(q * 100);
+  const farbe = q == null ? 'transparent' : q < 0.2 ? 'var(--rot)' : q < 0.35 ? 'var(--gelb)' : 'var(--gruen)';
+  return `<div class="balken"><i style="width:${w}%;background:${farbe}"></i></div>`;
+}
+
+// ---------- Dialog und Meldung ----------
+
+function dialog(text, knoepfe, eingabeWert) {
+  return new Promise(res => {
+    const o = document.createElement('div');
+    o.className = 'overlay';
+    const mitEingabe = eingabeWert !== undefined;
+    o.innerHTML = `<div class="dialog" role="dialog" aria-modal="true">
+      <p>${esc(text)}</p>
+      ${mitEingabe ? `<input type="text" maxlength="30" autocomplete="off" value="${esc(eingabeWert)}">` : ''}
+      <div class="zeile">${knoepfe.map((k, i) => `<button class="btn ${k.art || ''}" data-i="${i}">${esc(k.text)}</button>`).join('')}</div>
+    </div>`;
+    const inp = o.querySelector('input');
+    function fertig(i) {
+      o.remove();
+      document.removeEventListener('keydown', taste, true);
+      const k = knoepfe[i];
+      if (!k || k.wert == null) return res(null);
+      res(mitEingabe ? inp.value : k.wert);
+    }
+    function taste(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fertig(-1); }
+      else if (e.key === 'Enter' && mitEingabe) { e.preventDefault(); e.stopPropagation(); fertig(knoepfe.length - 1); }
+    }
+    o.addEventListener('click', e => {
+      const b = e.target.closest('button[data-i]');
+      if (b) fertig(Number(b.dataset.i));
+    });
+    document.addEventListener('keydown', taste, true);
+    document.body.appendChild(o);
+    if (inp) { inp.focus(); inp.select(); } else o.querySelector('.btn:last-child').focus();
+  });
+}
+
+let toastTimer = null;
+function meldung(text) {
+  let t = document.querySelector('.toast');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = text;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 3500);
+}
+
+// ---------- Bildschirm wach halten (wo der Browser es erlaubt) ----------
+
+let wakeLock = null;
+async function wachHalten(an) {
+  try {
+    if (an && 'wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!an && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch (e) { /* nicht unterstützt */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && lauf && !lauf.fertig) wachHalten(true);
+});
+
+// ---------- Darstellung ----------
+
+function render() {
+  const tabs = [['training', 'Training'], ['statistik', 'Statistik'], ['spieler', 'Spieler'], ['daten', 'Daten']];
+  document.getElementById('nav').innerHTML = tabs.map(([k, t]) =>
+    `<button class="${ansicht === k ? 'aktiv' : ''}" data-a="tab" data-v="${k}">${t}${
+      k === 'daten' && meta.ungesichert && daten.trainings.length ? '<span class="punkt" title="Nicht in Datei gesichert"></span>' : ''
+    }</button>`).join('');
+  const main = document.getElementById('main');
+  if (ansicht === 'training') main.innerHTML = lauf ? renderLauf() : renderEinrichtung();
+  else if (ansicht === 'statistik') main.innerHTML = renderStatistik();
+  else if (ansicht === 'spieler') main.innerHTML = renderSpieler();
+  else main.innerHTML = renderDaten();
+}
+
+function renderEinrichtung() {
+  const sp = daten.spieler;
+  if (!sp.find(s => s.id === einst.spieler)) einst.spieler = sp.length ? sp[0].id : null;
+  const nF = einst.felder.length, d = einst.durchgaenge;
+
+  let h = `<section class="karte"><h2>1. Spieler</h2>`;
+  if (!sp.length) {
+    h += `<p class="grau" style="margin-top:0">Noch kein Spieler angelegt.</p>
+      <div class="zeile"><input id="neuName" type="text" placeholder="Name" maxlength="30" autocomplete="off">
+      <button class="btn primaer" data-a="spielerNeu">Anlegen</button></div>`;
+  } else {
+    h += `<div class="zeile">${sp.map(s =>
+      `<button class="btn ${s.id === einst.spieler ? 'an' : ''}" data-a="waehleSpieler" data-id="${s.id}">${esc(s.name)}</button>`).join('')}</div>`;
+  }
+  h += `</section>`;
+
+  h += `<section class="karte"><h2>2. Doppelfeld</h2>
+    <div class="raster-felder">${FELDER.map(f =>
+      `<button class="btn ${einst.felder.includes(f) ? 'an' : ''} ${f === 25 ? 'bull' : ''}" data-a="feld" data-f="${f}">${feldName(f)}</button>`).join('')}</div>
+    <div class="zeile abstand">
+      <button class="btn klein" data-a="felderAlle">Alle</button>
+      <button class="btn klein" data-a="felderKeine">Keine</button>
+      ${nF > 1 ? `<span class="grau" style="margin-left:8px">Reihenfolge:</span>
+      <button class="btn klein ${einst.reihenfolge === 'auf' ? 'an' : ''}" data-a="reihenfolge" data-w="auf">der Reihe nach</button>
+      <button class="btn klein ${einst.reihenfolge === 'zufall' ? 'an' : ''}" data-a="reihenfolge" data-w="zufall">zufällig</button>` : ''}
+    </div>
+    <p class="hinweis">Ein Feld antippen für ein einzelnes Doppel. Mehrere Felder werden nacheinander gespielt.</p>
+  </section>`;
+
+  h += `<section class="karte"><h2>3. Durchgänge je Feld <span class="grau">(je 3 Darts)</span></h2>
+    <div class="zeile">
+      ${[3, 5, 10, 15, 20].map(n => `<button class="btn ${d === n ? 'an' : ''}" data-a="dg" data-w="${n}">${n}</button>`).join('')}
+      <span class="zahl">
+        <button class="btn" data-a="dgMinus" aria-label="weniger">−</button>
+        <input id="dgZahl" type="number" min="1" max="100" inputmode="numeric" value="${d}" data-c="dg" aria-label="Durchgänge">
+        <button class="btn" data-a="dgPlus" aria-label="mehr">+</button>
+      </span>
+    </div>
+    <p class="hinweis">${d} Durchgänge = ${d * 3} Darts je Feld</p>
+  </section>`;
+
+  const bereit = einst.spieler && nF;
+  h += `<button class="btn primaer gross" data-a="start" ${bereit ? '' : 'disabled'}>${
+    bereit ? `Start: ${nF === 1 ? feldName(einst.felder[0]) : nF + ' Felder'} × ${d} Durchgänge = ${zahl(nF * d * 3)} Darts`
+           : (einst.spieler ? 'Bitte ein Feld wählen' : 'Bitte einen Spieler anlegen')}</button>`;
+  return h;
+}
+
+function renderLauf() {
+  const L = lauf;
+  if (L.fertig) return renderZusammenfassung();
+  const name = esc(spielerName(L.spieler));
+  const feldText = L.felder.length > 1 ? ` · Feld ${L.idx + 1} von ${L.felder.length}` : '';
+
+  if (L.pause) {
+    const rec = daten.trainings.find(t => t.id === L.erledigt[L.erledigt.length - 1]);
+    const s = summe(rec ? [rec] : []);
+    return `<section class="karte anzeige">
+        <div class="info">${name}${feldText}</div>
+        <div class="feld">${feldName(L.felder[L.idx])}</div>
+        <div class="stand">${s.treffer} von ${s.darts} Darts</div>
+        <div class="quote-gross">${pct(s.quote)}</div>
+      </section>
+      <button class="btn primaer gross" data-a="weiter">Weiter zu ${feldName(L.felder[L.idx + 1])} ›</button>
+      <div class="zeile mitte abstand">
+        <button class="btn" data-a="rueck">↶ Rückgängig</button>
+        <button class="btn gefahr" data-a="beenden">Training beenden</button>
+      </div>`;
+  }
+
+  const dg = L.aktuell.length;
+  const t = L.aktuell.reduce((a, b) => a + b, 0);
+  let chips = '';
+  for (let i = 0; i < L.durchgaenge; i++) {
+    chips += i < dg ? `<span class="chip t${L.aktuell[i]}">${L.aktuell[i]}</span>` : `<span class="chip leer">·</span>`;
+  }
+  const kannRueck = dg > 0 || L.erledigt.length > 0;
+  return `<section class="karte anzeige">
+      <div class="info">${name}${feldText}</div>
+      <div class="feld">${feldName(L.felder[L.idx])}</div>
+      <div class="info">Durchgang <b style="color:var(--text)">${dg + 1}</b> von ${L.durchgaenge}</div>
+      <div class="stand">${t} Treffer <span class="grau">aus ${dg * 3} Darts${dg ? ' · ' + pct(t / (dg * 3)) : ''}</span></div>
+      <div class="chips">${chips}</div>
+    </section>
+    <div class="frage">Wie viele Doppel getroffen?</div>
+    <div class="treffer-knoepfe">${[0, 1, 2, 3].map(n =>
+      `<button class="btn t${n}" data-a="treffer" data-n="${n}">${n}</button>`).join('')}</div>
+    <div class="zeile mitte">
+      <button class="btn" data-a="rueck" ${kannRueck ? '' : 'disabled'}>↶ Rückgängig</button>
+      <button class="btn gefahr" data-a="beenden">Training beenden</button>
+    </div>
+    <p class="hinweis" style="text-align:center">Mit Tastatur: 0–3 eingeben, Rücktaste = rückgängig</p>`;
+}
+
+function renderZusammenfassung() {
+  const L = lauf;
+  const recs = L.erledigt.map(id => daten.trainings.find(t => t.id === id)).filter(Boolean);
+  const s = summe(recs);
+  let h = `<section class="karte anzeige">
+      <div class="info">${esc(spielerName(L.spieler))} · Training ${L.abgebrochen ? 'beendet' : 'fertig'}</div>
+      <div class="stand">${s.treffer} Treffer aus ${zahl(s.darts)} Darts</div>
+      <div class="quote-gross">${pct(s.quote)}</div>
+    </section>`;
+  if (recs.length) {
+    h += `<section class="karte"><h2>Ergebnis je Feld</h2><div class="tabelle"><table>
+      <tr><th>Feld</th><th class="z">Treffer</th><th class="z">Darts</th><th class="z">Quote</th><th>Durchgänge</th></tr>
+      ${recs.map(r => { const x = summe([r]); return `<tr><td class="feldname">${feldName(r.feld)}</td>
+        <td class="z">${x.treffer}</td><td class="z">${x.darts}</td><td class="z">${pct(x.quote)}</td>
+        <td class="detail">${r.treffer.join(' · ')}</td></tr>`; }).join('')}
+    </table></div></section>`;
+  }
+  h += `<button class="btn primaer gross" data-a="nochmal">Gleiches Training nochmal</button>
+    <div class="zeile mitte abstand">
+      <button class="btn" data-a="neu">Neues Training</button>
+      <button class="btn" data-a="tab" data-v="statistik">Zur Statistik</button>
+      ${!L.abgebrochen && recs.length ? '<button class="btn" data-a="rueck">↶ Letzte Eingabe rückgängig</button>' : ''}
+    </div>`;
+  return h;
+}
+
+// ---------- Statistik ----------
+
+function zeitraumGrenzen() {
+  const j = new Date();
+  const heute = new Date(j.getFullYear(), j.getMonth(), j.getDate());
+  const ausText = (s, ende) => {
+    if (!s) return null;
+    const [y, m, d] = s.split('-').map(Number);
+    return ende ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
+  };
+  switch (statF.zeitraum) {
+    case 'heute': return { von: heute, bis: null };
+    case 'woche': return { von: new Date(heute.getFullYear(), heute.getMonth(), heute.getDate() - (heute.getDay() + 6) % 7), bis: null };
+    case 'monat': return { von: new Date(j.getFullYear(), j.getMonth(), 1), bis: null };
+    case 'jahr': return { von: new Date(j.getFullYear(), 0, 1), bis: null };
+    case 'eigen': return { von: ausText(statF.von, false), bis: ausText(statF.bis, true) };
+    default: return { von: null, bis: null };
+  }
+}
+
+function isoWoche(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const tag = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - tag);
+  const jahr = t.getUTCFullYear();
+  const kw = Math.ceil(((t - Date.UTC(jahr, 0, 1)) / 86400000 + 1) / 7);
+  return { jahr, kw };
+}
+
+function gruppe(d) {
+  switch (statF.gruppe) {
+    case 'woche': { const w = isoWoche(d); return [`${w.jahr}-${pad(w.kw)}`, `KW ${w.kw} / ${w.jahr}`]; }
+    case 'monat': return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}`, `${MONATE[d.getMonth()]} ${d.getFullYear()}`];
+    case 'jahr': return [String(d.getFullYear()), String(d.getFullYear())];
+    default: return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, `${WOCHENTAGE[d.getDay()]} ${fmtDatum(d)}`];
+  }
+}
+
+function segment(aktion, aktuell, werte) {
+  return `<div class="segment">${werte.map(([w, t]) =>
+    `<button class="btn klein ${aktuell === w ? 'an' : ''}" data-a="${aktion}" data-w="${w}">${t}</button>`).join('')}</div>`;
+}
+
+function renderStatistik() {
+  if (statF.spieler !== 'alle' && !daten.spieler.find(s => s.id === statF.spieler)) statF.spieler = 'alle';
+  const { von, bis } = zeitraumGrenzen();
+  const liste = daten.trainings.filter(t => {
+    if (statF.spieler !== 'alle' && t.spieler !== statF.spieler) return false;
+    const d = new Date(t.datum);
+    return (!von || d >= von) && (!bis || d <= bis);
+  });
+
+  let h = `<section class="karte">
+    <div class="zeile" style="margin-bottom:12px">
+      <label>Spieler <select data-c="statSpieler">
+        <option value="alle">Alle Spieler</option>
+        ${daten.spieler.map(s => `<option value="${s.id}" ${statF.spieler === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+      </select></label>
+    </div>
+    ${segment('statZeit', statF.zeitraum, [['heute', 'Heute'], ['woche', 'Diese Woche'], ['monat', 'Dieser Monat'], ['jahr', 'Dieses Jahr'], ['gesamt', 'Gesamt'], ['eigen', 'Zeitraum …']])}
+    ${statF.zeitraum === 'eigen' ? `<div class="zeile abstand">
+      <label>von <input type="date" data-c="statVon" value="${statF.von}"></label>
+      <label>bis <input type="date" data-c="statBis" value="${statF.bis}"></label></div>` : ''}
+  </section>`;
+
+  if (!liste.length) {
+    return h + `<section class="karte"><p class="grau" style="margin:0">Keine Trainings im gewählten Zeitraum.</p></section>`;
+  }
+
+  // Gesamt
+  const s = summe(liste);
+  const runden = new Set(liste.map(t => t.runde)).size;
+  h += `<div class="kacheln">
+    <div class="kachel"><b>${zahl(runden)}</b><span>Trainings</span></div>
+    <div class="kachel"><b>${zahl(s.darts)}</b><span>Darts</span></div>
+    <div class="kachel"><b>${zahl(s.treffer)}</b><span>Treffer</span></div>
+    <div class="kachel"><b>${pct(s.quote)}</b><span>Quote</span></div>
+  </div>`;
+
+  // Verteilung der Treffer je Durchgang
+  const vert = [0, 0, 0, 0];
+  for (const t of liste) for (const n of t.treffer) vert[n]++;
+  h += `<section class="karte"><h2>Treffer je Durchgang <span class="grau">(${zahl(s.dg)} Durchgänge)</span></h2>
+    <div class="kacheln">${vert.map((v, n) =>
+      `<div class="kachel"><b>${zahl(v)}×</b><span>${n} Treffer · ${pct(v / s.dg)}</span></div>`).join('')}</div></section>`;
+
+  // Je Feld
+  let felder = FELDER.map(f => ({ f, ...summe(liste.filter(t => t.feld === f)) }));
+  if (statF.sort === 'quote') felder.sort((a, b) => (b.quote ?? -1) - (a.quote ?? -1));
+  h += `<section class="karte"><div class="kopfzeile"><h2>Je Feld</h2>
+      ${segment('statSort', statF.sort, [['feld', 'nach Feld'], ['quote', 'nach Quote']])}</div>
+    <div class="tabelle"><table>
+      <tr><th>Feld</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
+      ${felder.map(x => `<tr class="${x.dg ? '' : 'leer'}"><td class="feldname">${feldName(x.f)}</td>
+        <td class="z">${x.dg ? zahl(x.darts) : '–'}</td><td class="z">${x.dg ? zahl(x.treffer) : '–'}</td>
+        <td class="z">${pct(x.quote)}</td><td class="b">${balken(x.quote)}</td></tr>`).join('')}
+    </table></div></section>`;
+
+  // Verlauf
+  const grp = new Map();
+  for (const t of liste) {
+    const [k, label] = gruppe(new Date(t.datum));
+    if (!grp.has(k)) grp.set(k, { label, liste: [] });
+    grp.get(k).liste.push(t);
+  }
+  const zeilen = [...grp.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  h += `<section class="karte"><div class="kopfzeile"><h2>Verlauf</h2>
+      ${segment('statGruppe', statF.gruppe, [['tag', 'Tag'], ['woche', 'Woche'], ['monat', 'Monat'], ['jahr', 'Jahr']])}</div>
+    <div class="tabelle"><table>
+      <tr><th>Zeitraum</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
+      ${zeilen.map(([, g]) => { const x = summe(g.liste); return `<tr><td>${g.label}</td>
+        <td class="z">${zahl(x.darts)}</td><td class="z">${zahl(x.treffer)}</td><td class="z">${pct(x.quote)}</td>
+        <td class="b">${balken(x.quote)}</td></tr>`; }).join('')}
+    </table></div></section>`;
+
+  // Spielervergleich
+  if (statF.spieler === 'alle') {
+    const proSpieler = daten.spieler.map(sp => ({ sp, ...summe(liste.filter(t => t.spieler === sp.id)) }))
+      .filter(x => x.dg).sort((a, b) => b.quote - a.quote);
+    if (proSpieler.length > 1) {
+      h += `<section class="karte"><h2>Spielervergleich</h2><div class="tabelle"><table>
+        <tr><th>Spieler</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
+        ${proSpieler.map(x => `<tr><td class="feldname">${esc(x.sp.name)}</td><td class="z">${zahl(x.darts)}</td>
+          <td class="z">${zahl(x.treffer)}</td><td class="z">${pct(x.quote)}</td><td class="b">${balken(x.quote)}</td></tr>`).join('')}
+      </table></div></section>`;
+    }
+  }
+
+  // Einzelne Trainings
+  const sortiert = liste.slice().sort((a, b) => Date.parse(b.datum) - Date.parse(a.datum));
+  const zeige = statF.alle ? sortiert : sortiert.slice(0, 30);
+  h += `<section class="karte"><h2>Einzelne Trainings <span class="grau">(je Feld)</span></h2><div class="tabelle"><table>
+    <tr><th>Datum</th>${statF.spieler === 'alle' ? '<th>Spieler</th>' : ''}<th>Feld</th><th class="z">Treffer</th><th class="z">Quote</th><th>Durchgänge</th><th></th></tr>
+    ${zeige.map(t => { const x = summe([t]); const d = new Date(t.datum); return `<tr>
+      <td style="white-space:nowrap">${fmtDatum(d)} <span class="grau">${fmtZeit(d)}</span></td>
+      ${statF.spieler === 'alle' ? `<td>${esc(spielerName(t.spieler))}</td>` : ''}
+      <td class="feldname">${feldName(t.feld)}</td><td class="z">${x.treffer}/${x.darts}</td><td class="z">${pct(x.quote)}</td>
+      <td class="detail">${t.treffer.join(' · ')}</td>
+      <td class="z"><button class="btn klein gefahr" data-a="trLoeschen" data-id="${t.id}" aria-label="Löschen">✕</button></td></tr>`; }).join('')}
+  </table></div>
+  ${sortiert.length > 30 && !statF.alle ? `<div class="zeile abstand"><button class="btn klein" data-a="statAlle">Alle ${sortiert.length} anzeigen</button></div>` : ''}
+  </section>`;
+  return h;
+}
+
+// ---------- Spieler ----------
+
+function renderSpieler() {
+  let h = `<section class="karte"><h2>Spieler anlegen</h2>
+    <div class="zeile"><input id="neuName" type="text" placeholder="Name" maxlength="30" autocomplete="off">
+    <button class="btn primaer" data-a="spielerNeu">Hinzufügen</button></div></section>`;
+  h += `<section class="karte"><h2>Spieler <span class="grau">(${daten.spieler.length})</span></h2>`;
+  if (!daten.spieler.length) h += `<p class="grau" style="margin:0">Noch keine Spieler.</p>`;
+  for (const sp of daten.spieler) {
+    const tr = daten.trainings.filter(t => t.spieler === sp.id);
+    const s = summe(tr);
+    h += `<div class="spieler-zeile"><div><b>${esc(sp.name)}</b>
+      <div class="grau">${tr.length ? `${zahl(new Set(tr.map(t => t.runde)).size)} Trainings · ${zahl(s.darts)} Darts · Quote ${pct(s.quote)}` : 'noch keine Trainings'}</div></div>
+      <div class="zeile"><button class="btn klein" data-a="umbenennen" data-id="${sp.id}">Umbenennen</button>
+      <button class="btn klein gefahr" data-a="spielerLoeschen" data-id="${sp.id}">Löschen</button></div></div>`;
+  }
+  return h + `</section>`;
+}
+
+async function spielerNeu() {
+  const inp = document.getElementById('neuName');
+  const name = (inp ? inp.value : '').trim();
+  if (!name) { meldung('Bitte einen Namen eingeben.'); if (inp) inp.focus(); return; }
+  if (daten.spieler.some(s => s.name.toLowerCase() === name.toLowerCase())) { meldung(`„${name}“ gibt es schon.`); return; }
+  const sp = { id: neueId(), name, angelegt: new Date().toISOString() };
+  daten.spieler.push(sp);
+  einst.spieler = sp.id;
+  einstSpeichern();
+  datenGeaendert();
+  render();
+  meldung(`${name} angelegt.`);
+  const neu = document.getElementById('neuName');
+  if (neu && ansicht === 'spieler') neu.focus();
+}
+
+async function umbenennen(id) {
+  const sp = daten.spieler.find(s => s.id === id);
+  if (!sp) return;
+  const name = await dialog('Neuer Name:', [{ text: 'Abbrechen', wert: null }, { text: 'Speichern', wert: true, art: 'primaer' }], sp.name);
+  if (name == null) return;
+  const n = name.trim();
+  if (!n || n === sp.name) return;
+  if (daten.spieler.some(s => s.id !== id && s.name.toLowerCase() === n.toLowerCase())) { meldung(`„${n}“ gibt es schon.`); return; }
+  sp.name = n;
+  datenGeaendert();
+  render();
+}
+
+async function spielerLoeschen(id) {
+  const sp = daten.spieler.find(s => s.id === id);
+  if (!sp) return;
+  if (lauf && lauf.spieler === id && !lauf.fertig) { meldung(`${sp.name} hat gerade ein laufendes Training.`); return; }
+  const n = daten.trainings.filter(t => t.spieler === id).length;
+  const ok = await dialog(`Spieler „${sp.name}“ löschen?${n ? `\n\nDabei werden auch die ${n} zugehörigen Feld-Trainings gelöscht.` : ''}`,
+    [{ text: 'Abbrechen', wert: null }, { text: 'Löschen', wert: true, art: 'gefahr' }]);
+  if (!ok) return;
+  daten.spieler = daten.spieler.filter(s => s.id !== id);
+  daten.trainings = daten.trainings.filter(t => t.spieler !== id);
+  if (lauf && lauf.spieler === id) { lauf = null; laufSpeichern(); }
+  datenGeaendert();
+  render();
+}
+
+// ---------- Training ----------
+
+function starten(o) {
+  o = o || { spieler: einst.spieler, felder: einst.felder.slice(), durchgaenge: einst.durchgaenge, reihenfolge: einst.reihenfolge };
+  if (!o.spieler || !o.felder.length) return;
+  const folge = o.felder.slice().sort((a, b) => a - b);
+  if (o.reihenfolge === 'zufall') {
+    for (let i = folge.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [folge[i], folge[j]] = [folge[j], folge[i]]; }
+  }
+  lauf = {
+    runde: neueId(), spieler: o.spieler, felder: folge, auswahl: o.felder.slice(), reihenfolge: o.reihenfolge,
+    durchgaenge: o.durchgaenge, idx: 0, aktuell: [], erledigt: [], pause: false, fertig: false, abgebrochen: false
+  };
+  laufSpeichern();
+  wachHalten(true);
+  render();
+  window.scrollTo(0, 0);
+}
+
+function feldSpeichern(L) {
+  const rec = { id: neueId(), runde: L.runde, spieler: L.spieler, feld: L.felder[L.idx], datum: new Date().toISOString(), treffer: L.aktuell.slice() };
+  daten.trainings.push(rec);
+  L.erledigt.push(rec.id);
+  L.aktuell = [];
+  datenGeaendert();
+}
+
+function eingabe(n) {
+  const L = lauf;
+  if (!L || L.pause || L.fertig) return;
+  L.aktuell.push(n);
+  try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) { /* egal */ }
+  if (L.aktuell.length >= L.durchgaenge) {
+    feldSpeichern(L);
+    if (L.idx >= L.felder.length - 1) { L.fertig = true; wachHalten(false); }
+    else { L.pause = true; L.pauseSeit = Date.now(); }
+  }
+  laufSpeichern();
+  render();
+}
+
+function weiter() {
+  const L = lauf;
+  if (!L || !L.pause || Date.now() - (L.pauseSeit || 0) < 400) return; // Schutz gegen versehentlichen Doppeltipp
+  L.idx++;
+  L.pause = false;
+  laufSpeichern();
+  render();
+}
+
+function rueckgaengig() {
+  const L = lauf;
+  if (!L) return;
+  if (!L.pause && !L.fertig && L.aktuell.length) {
+    L.aktuell.pop();
+  } else if (L.erledigt.length && !L.abgebrochen) {
+    // Zurück in das zuletzt abgeschlossene Feld: gespeichertes Ergebnis wieder herausnehmen
+    if (!L.pause && !L.fertig) L.idx--;
+    const id = L.erledigt.pop();
+    const i = daten.trainings.findIndex(t => t.id === id);
+    const rec = i >= 0 ? daten.trainings.splice(i, 1)[0] : null;
+    if (rec) datenGeaendert();
+    L.aktuell = rec ? rec.treffer.slice(0, -1) : [];
+    L.pause = false;
+    if (L.fertig) { L.fertig = false; wachHalten(true); }
+  } else return;
+  laufSpeichern();
+  render();
+}
+
+async function trainingBeenden() {
+  const L = lauf;
+  if (!L) return;
+  const offen = L.aktuell.length;
+  const fname = feldName(L.felder[L.idx]);
+  let text = 'Training jetzt beenden?';
+  if (L.erledigt.length) text += `\n\nAbgeschlossene Felder (${L.erledigt.length}) bleiben gespeichert.`;
+  const knoepfe = [{ text: 'Weiterspielen', wert: null }];
+  if (offen && !L.pause) {
+    text += `\n\nAuf ${fname} sind erst ${offen} von ${L.durchgaenge} Durchgängen gespielt.`;
+    knoepfe.push({ text: `${fname} verwerfen`, wert: 'verwerfen', art: 'gefahr' });
+    knoepfe.push({ text: `${fname} speichern`, wert: 'speichern', art: 'primaer' });
+  } else {
+    knoepfe.push({ text: 'Beenden', wert: 'verwerfen', art: 'gefahr' });
+  }
+  const wahl = await dialog(text, knoepfe);
+  if (!wahl) return;
+  if (wahl === 'speichern' && offen) feldSpeichern(L);
+  if (L.erledigt.length) { L.fertig = true; L.abgebrochen = true; L.pause = false; L.aktuell = []; }
+  else lauf = null;
+  wachHalten(false);
+  laufSpeichern();
+  render();
+}
+
+// ---------- Daten / txt-Datei ----------
+
+function datenAlsText() {
+  const jetzt = new Date();
+  const liste = (arr, f) => (arr.length ? '[\n    ' + arr.map(f).join(',\n    ') + '\n  ]' : '[]');
+  const json = '{\n' +
+    '  "app": "Doppel 15",\n' +
+    `  "version": ${VERSION},\n` +
+    `  "gespeichert": ${JSON.stringify(jetzt.toISOString())},\n` +
+    '  "spieler": ' + liste(daten.spieler, s => JSON.stringify({ id: s.id, name: s.name, angelegt: s.angelegt })) + ',\n' +
+    '  "trainings": ' + liste(daten.trainings, t => JSON.stringify({ id: t.id, runde: t.runde, spieler: t.spieler, feld: t.feld, datum: t.datum, treffer: t.treffer })) + '\n' +
+    '}\n';
+  return [
+    'Doppel 15 – Doppeltraining',
+    `Datenformat: ${VERSION}`,
+    `Gespeichert: ${fmtDatum(jetzt)} ${fmtZeit(jetzt)}`,
+    `Spieler: ${daten.spieler.map(s => s.name).join(', ') || '–'}`,
+    `Feld-Trainings: ${daten.trainings.length}`,
+    '',
+    'Diese Datei in Doppel 15 unter „Daten“ → „Aus txt-Datei laden“ wieder einlesen.',
+    'Bitte nicht von Hand ändern. Feld 25 = Bull, "treffer" = Treffer je Durchgang (3 Darts).',
+    '',
+    '----- DATEN -----',
+    json
+  ].join('\n');
+}
+
+function parseDatei(text) {
+  text = text.replace(/^﻿/, '');
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('Keine Doppel-15-Daten gefunden.');
+  let o;
+  try { o = JSON.parse(text.slice(a, b + 1)); } catch (e) { throw new Error('Der Inhalt ist beschädigt.'); }
+  if (o.app !== 'Doppel 15') throw new Error('Die Datei stammt nicht von Doppel 15.');
+  if (Number(o.version) > VERSION) throw new Error(`Die Datei stammt von einer neueren Fassung von Doppel 15 (Datenformat ${o.version}).`);
+  return normalisieren(o);
+}
+
+function gesichert(name) {
+  meta.ungesichert = false;
+  meta.letzteDatei = new Date().toISOString();
+  meta.dateiName = name;
+  lsSchreiben(LS.meta, meta);
+}
+
+async function inDateiSchreiben(h, still) {
+  try {
+    const w = await h.createWritable();
+    await w.write('﻿' + datenAlsText());
+    await w.close();
+    gesichert(h.name);
+    if (!still) meldung(`Gespeichert in „${h.name}“.`);
+    else if (ansicht === 'daten') render();
+    return true;
+  } catch (e) {
+    if (still) { autoDatei = false; meldung('Automatisches Speichern in die Datei ist fehlgeschlagen.'); }
+    else meldung('Speichern fehlgeschlagen: ' + e.message);
+    return false;
+  }
+}
+
+function herunterladen() {
+  const blob = new Blob(['﻿' + datenAlsText()], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = DATEINAME;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  gesichert(DATEINAME);
+  meldung(`„${DATEINAME}“ wurde heruntergeladen.`);
+}
+
+async function dateiSpeichern(neueDatei) {
+  if (!fsApi) { herunterladen(); render(); return; }
+  if (!dateiHandle || neueDatei) {
+    try {
+      dateiHandle = await window.showSaveFilePicker({
+        suggestedName: DATEINAME,
+        types: [{ description: 'Textdatei', accept: { 'text/plain': ['.txt'] } }]
+      });
+    } catch (e) {
+      if (e.name !== 'AbortError') herunterladen();
+      render();
+      return;
+    }
+  }
+  await inDateiSchreiben(dateiHandle, false);
+  render();
+}
+
+async function dateiLaden() {
+  if (typeof window.showOpenFilePicker === 'function') {
+    try {
+      const [h] = await window.showOpenFilePicker({ multiple: false, types: [{ description: 'Textdatei', accept: { 'text/plain': ['.txt'] } }] });
+      const f = await h.getFile();
+      if (await textEinlesen(await f.text(), f.name)) { dateiHandle = h; render(); }
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+  const inp = document.getElementById('dateiInput');
+  inp.value = '';
+  inp.click();
+}
+
+document.getElementById('dateiInput').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => textEinlesen(String(r.result), f.name);
+  r.onerror = () => meldung('Die Datei konnte nicht gelesen werden.');
+  r.readAsText(f, 'utf-8');
+});
+
+async function textEinlesen(text, name) {
+  let neu;
+  try { neu = parseDatei(text); }
+  catch (e) { await dialog(`Die Datei „${name}“ konnte nicht geladen werden.\n\n${e.message}`, [{ text: 'OK', wert: true }]); return false; }
+
+  const wahl = await dialog(
+    `Datei „${name}“:\n${neu.spieler.length} Spieler, ${neu.trainings.length} Feld-Trainings\n\n` +
+    `Hier im Browser:\n${daten.spieler.length} Spieler, ${daten.trainings.length} Feld-Trainings\n\n` +
+    'Zusammenführen: Beides wird vereint (z. B. wenn auf mehreren Geräten trainiert wurde).\n' +
+    'Ersetzen: Der Stand hier wird durch die Datei ersetzt.',
+    [{ text: 'Abbrechen', wert: null }, { text: 'Ersetzen', wert: 'ersetzen', art: 'gefahr' }, { text: 'Zusammenführen', wert: 'merge', art: 'primaer' }]);
+  if (!wahl) return false;
+
+  if (wahl === 'ersetzen') {
+    daten = neu;
+    if (lauf && !daten.spieler.find(s => s.id === lauf.spieler)) lauf = null;
+    lsSchreiben(LS.daten, daten);
+    laufSpeichern();
+    gesichert(name);
+    meldung('Daten aus der Datei übernommen.');
+  } else {
+    const dateiIds = new Set(neu.trainings.map(t => t.id));
+    const nurHier = daten.trainings.some(t => !dateiIds.has(t.id));
+    const idMap = {};
+    for (const s of neu.spieler) {
+      const da = daten.spieler.find(x => x.id === s.id) || daten.spieler.find(x => x.name.toLowerCase() === s.name.toLowerCase());
+      if (da) idMap[s.id] = da.id;
+      else { daten.spieler.push({ ...s }); idMap[s.id] = s.id; }
+    }
+    const vorhanden = new Set(daten.trainings.map(t => t.id));
+    let dazu = 0;
+    for (const t of neu.trainings) {
+      if (vorhanden.has(t.id)) continue;
+      daten.trainings.push({ ...t, spieler: idMap[t.spieler] || t.spieler });
+      dazu++;
+    }
+    daten.trainings.sort((a, b) => Date.parse(a.datum) - Date.parse(b.datum));
+    lsSchreiben(LS.daten, daten);
+    if (nurHier) { meta.ungesichert = true; lsSchreiben(LS.meta, meta); } else gesichert(name);
+    meldung(`${dazu} Feld-Trainings hinzugefügt.`);
+  }
+  render();
+  return true;
+}
+
+function renderDaten() {
+  const s = summe(daten.trainings);
+  let status;
+  if (!daten.trainings.length) status = '<p class="grau">Noch keine Trainings vorhanden.</p>';
+  else if (meta.ungesichert) status = '<p class="warnung">⚠ Es gibt Trainings, die noch nicht in einer txt-Datei gesichert sind.</p>';
+  else {
+    const d = meta.letzteDatei ? new Date(meta.letzteDatei) : null;
+    status = `<p class="ok">✓ Alles in einer txt-Datei gesichert${d ? ` (${fmtDatum(d)} ${fmtZeit(d)}${meta.dateiName ? `, „${esc(meta.dateiName)}“` : ''})` : ''}.</p>`;
+  }
+  return `<section class="karte"><h2>Speicherung</h2>
+      ${speicherOk
+        ? '<p class="ok" style="margin-top:0">✓ Alle Trainings werden automatisch in diesem Browser gespeichert.</p>'
+        : '<p class="warnung" style="margin-top:0">⚠ Dieser Browser erlaubt kein automatisches Speichern (z. B. privates Fenster). Bitte nach dem Training unbedingt in eine txt-Datei speichern.</p>'}
+      ${status}
+      <p class="hinweis">Der Browser-Speicher gilt nur für diesen Browser auf diesem Gerät. Zur Sicherung und zum Übertragen auf ein anderes Gerät die Daten als txt-Datei speichern.</p>
+    </section>
+    <section class="karte"><h2>txt-Datei</h2>
+      <div class="zeile">
+        <button class="btn primaer" data-a="dateiSpeichern">${dateiHandle ? `In „${esc(dateiHandle.name)}“ speichern` : 'In txt-Datei speichern'}</button>
+        ${dateiHandle ? '<button class="btn" data-a="speichernUnter">Andere Datei …</button>' : ''}
+        <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
+      </div>
+      ${fsApi
+        ? (dateiHandle
+            ? `<div class="zeile abstand"><label><input type="checkbox" data-c="auto" ${autoDatei ? 'checked' : ''}> Nach jedem Feld automatisch in diese Datei schreiben</label></div>`
+            : '<p class="hinweis">Nach der ersten Auswahl schreibt dieser Browser bis zum Schließen der Seite immer in dieselbe Datei.</p>')
+        : `<p class="hinweis">Dieser Browser speichert die Datei als Download (meist im Ordner „Downloads“). Bei wiederholtem Speichern entstehen Namen wie „doppel15-daten (1).txt“ – die neueste Datei enthält immer alles.</p>`}
+      <p class="hinweis">Beim Laden kann man wählen, ob die Datei den Stand hier ersetzt oder mit ihm zusammengeführt wird.</p>
+    </section>
+    <section class="karte"><h2>Übersicht</h2>
+      <p style="margin:0">${daten.spieler.length} Spieler · ${zahl(new Set(daten.trainings.map(t => t.runde)).size)} Trainings · ${zahl(daten.trainings.length)} Felder · ${zahl(s.darts)} Darts</p>
+    </section>`;
+}
+
+// ---------- Bedienung ----------
+
+function setDg(n) {
+  if (!Number.isFinite(n)) n = 5;
+  einst.durchgaenge = Math.max(1, Math.min(100, Math.round(n)));
+  einstSpeichern();
+  render();
+}
+
+const aktionen = {
+  tab: el => { ansicht = el.dataset.v; render(); window.scrollTo(0, 0); },
+  waehleSpieler: el => { einst.spieler = el.dataset.id; einstSpeichern(); render(); },
+  feld: el => {
+    const f = Number(el.dataset.f), i = einst.felder.indexOf(f);
+    if (i >= 0) einst.felder.splice(i, 1); else einst.felder.push(f);
+    einst.felder.sort((a, b) => a - b);
+    einstSpeichern(); render();
+  },
+  felderAlle: () => { einst.felder = FELDER.slice(); einstSpeichern(); render(); },
+  felderKeine: () => { einst.felder = []; einstSpeichern(); render(); },
+  reihenfolge: el => { einst.reihenfolge = el.dataset.w; einstSpeichern(); render(); },
+  dg: el => setDg(Number(el.dataset.w)),
+  dgMinus: () => setDg(einst.durchgaenge - 1),
+  dgPlus: () => setDg(einst.durchgaenge + 1),
+  start: () => starten(),
+  treffer: el => eingabe(Number(el.dataset.n)),
+  rueck: () => rueckgaengig(),
+  weiter: () => weiter(),
+  beenden: () => trainingBeenden(),
+  nochmal: () => starten({ spieler: lauf.spieler, felder: lauf.auswahl, durchgaenge: lauf.durchgaenge, reihenfolge: lauf.reihenfolge }),
+  neu: () => { lauf = null; laufSpeichern(); render(); window.scrollTo(0, 0); },
+  spielerNeu: () => spielerNeu(),
+  umbenennen: el => umbenennen(el.dataset.id),
+  spielerLoeschen: el => spielerLoeschen(el.dataset.id),
+  statZeit: el => { statF.zeitraum = el.dataset.w; statF.alle = false; statSpeichern(); render(); },
+  statGruppe: el => { statF.gruppe = el.dataset.w; statSpeichern(); render(); },
+  statSort: el => { statF.sort = el.dataset.w; statSpeichern(); render(); },
+  statAlle: () => { statF.alle = true; render(); },
+  trLoeschen: async el => {
+    const t = daten.trainings.find(x => x.id === el.dataset.id);
+    if (!t) return;
+    const s = summe([t]);
+    const ok = await dialog(`Dieses Training löschen?\n\n${fmtDatum(new Date(t.datum))} · ${spielerName(t.spieler)} · ${feldName(t.feld)} · ${s.treffer}/${s.darts}`,
+      [{ text: 'Abbrechen', wert: null }, { text: 'Löschen', wert: true, art: 'gefahr' }]);
+    if (!ok) return;
+    daten.trainings = daten.trainings.filter(x => x.id !== t.id);
+    datenGeaendert();
+    render();
+  },
+  dateiSpeichern: () => dateiSpeichern(false),
+  speichernUnter: () => dateiSpeichern(true),
+  dateiLaden: () => dateiLaden()
+};
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-a]');
+  if (!el || el.disabled || document.querySelector('.overlay')) return;
+  const f = aktionen[el.dataset.a];
+  if (f) f(el);
+});
+
+document.addEventListener('change', e => {
+  const c = e.target.dataset.c;
+  if (!c) return;
+  if (c === 'dg') setDg(parseInt(e.target.value, 10));
+  else if (c === 'statSpieler') { statF.spieler = e.target.value; statF.alle = false; statSpeichern(); render(); }
+  else if (c === 'statVon') { statF.von = e.target.value; statSpeichern(); render(); }
+  else if (c === 'statBis') { statF.bis = e.target.value; statSpeichern(); render(); }
+  else if (c === 'auto') {
+    autoDatei = e.target.checked;
+    if (autoDatei && dateiHandle) inDateiSchreiben(dateiHandle, false);
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (document.querySelector('.overlay')) return;
+  const ziel = e.target;
+  if (ziel.matches && ziel.matches('input, select, textarea')) {
+    if (e.key === 'Enter' && ziel.id === 'neuName') { e.preventDefault(); spielerNeu(); }
+    return;
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && ziel.closest && ziel.closest('button')) return; // Knopf löst selbst aus
+  if (ansicht !== 'training' || !lauf || lauf.fertig || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (lauf.pause) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); weiter(); }
+    else if (e.key === 'Backspace') { e.preventDefault(); rueckgaengig(); }
+    return;
+  }
+  if (/^[0-3]$/.test(e.key)) { e.preventDefault(); eingabe(Number(e.key)); }
+  else if (e.key === 'Backspace') { e.preventDefault(); rueckgaengig(); }
+});
+
+if (lauf && !lauf.fertig) wachHalten(true);
+render();
+</script>
+</body>
+</html>
