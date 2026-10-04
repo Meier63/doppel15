@@ -168,6 +168,10 @@ td.b { width: 32%; }
 .spieler-zeile:last-child { border-bottom: 0; }
 .spieler-zeile b { font-size: 20px; }
 
+select.spielerwahl { flex: 1; min-width: 220px; max-width: 480px; font-size: 22px; font-weight: 700; min-height: 60px; }
+.banner { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+  background: #2b2610; border: 1px solid #6b5a14; color: var(--gelb); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; }
+
 /* Dialog und Meldung */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; }
 .dialog { background: var(--karte); border: 1px solid var(--linie); border-radius: var(--radius); padding: 20px; max-width: 480px; width: 100%; }
@@ -208,7 +212,11 @@ const LS = {
 const FELDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25]; // 25 = Bull
 const WOCHENTAGE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-const fsApi = typeof window.showSaveFilePicker === 'function';
+const fsOrdner = typeof window.showDirectoryPicker === 'function';   // Chrome/Edge am PC/Mac
+const kannTeilen = (() => {                                            // Handy/Tablet: „In Dateien sichern“
+  try { return !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] })); }
+  catch (e) { return false; }
+})();
 
 const feldName = f => (f === 25 ? 'Bull' : 'D' + f);
 const pad = n => String(n).padStart(2, '0');
@@ -241,7 +249,11 @@ function normalisieren(o) {
   if (!o || typeof o !== 'object') return null;
   const spieler = (Array.isArray(o.spieler) ? o.spieler : [])
     .filter(s => s && s.id && typeof s.name === 'string')
-    .map(s => ({ id: String(s.id), name: s.name.trim() || '?', angelegt: s.angelegt || new Date().toISOString() }));
+    .map(s => {
+      const sp = { id: String(s.id), name: s.name.trim() || '?', angelegt: s.angelegt || new Date().toISOString() };
+      if (s.versteckt) sp.versteckt = true;   // aus der Auswahlliste entfernt, Daten bleiben
+      return sp;
+    });
   const ids = new Set(spieler.map(s => s.id));
   const trainings = (Array.isArray(o.trainings) ? o.trainings : [])
     .filter(t => t && t.id && ids.has(String(t.spieler)) && FELDER.includes(Number(t.feld)) &&
@@ -259,24 +271,26 @@ function normalisieren(o) {
 }
 
 let daten = normalisieren(lsLesen(LS.daten)) || { spieler: [], trainings: [] };
-let meta = Object.assign({ ungesichert: false, letzteDatei: null, dateiName: null }, lsLesen(LS.meta) || {});
+let meta = Object.assign({ ungesichert: false, letzteDatei: null, dateiName: null, autoOrdner: true }, lsLesen(LS.meta) || {});
 let einst = Object.assign({ spieler: null, felder: [20], durchgaenge: 5, reihenfolge: 'auf' }, lsLesen(LS.einst) || {});
 let statF = Object.assign({ spieler: 'alle', zeitraum: 'monat', von: '', bis: '', gruppe: 'tag', sort: 'feld', alle: false }, lsLesen(LS.stat) || {});
 let lauf = lsLesen(LS.lauf);             // laufendes Training
 let ansicht = 'training';
-let dateiHandle = null;                  // nur Chrome/Edge: gewählte txt-Datei
-let autoDatei = false;
+let ordner = null;                       // nur Chrome/Edge: gewählter Speicherordner
+let ordnerRecht = 'prompt';              // granted | prompt | denied
+let neuerSpielerOffen = false;
 let schreibKette = Promise.resolve();
 
 function datenGeaendert() {
   lsSchreiben(LS.daten, daten);
   meta.ungesichert = true;
   lsSchreiben(LS.meta, meta);
-  if (autoDatei && dateiHandle) {
-    const h = dateiHandle;
-    schreibKette = schreibKette.then(() => inDateiSchreiben(h, true));
+  if (ordner && meta.autoOrdner && ordnerRecht === 'granted') {
+    schreibKette = schreibKette.then(() => inOrdnerSchreiben(true));
   }
 }
+
+const aktiveSpieler = () => daten.spieler.filter(s => !s.versteckt).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 const laufSpeichern = () => lsSchreiben(LS.lauf, lauf);
 const einstSpeichern = () => lsSchreiben(LS.einst, einst);
 const statSpeichern = () => lsSchreiben(LS.stat, statF);
@@ -358,12 +372,16 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------- Darstellung ----------
 
-function render() {
+function renderNav() {
   const tabs = [['training', 'Training'], ['statistik', 'Statistik'], ['spieler', 'Spieler'], ['daten', 'Daten']];
   document.getElementById('nav').innerHTML = tabs.map(([k, t]) =>
     `<button class="${ansicht === k ? 'aktiv' : ''}" data-a="tab" data-v="${k}">${t}${
       k === 'daten' && meta.ungesichert && daten.trainings.length ? '<span class="punkt" title="Nicht in Datei gesichert"></span>' : ''
     }</button>`).join('');
+}
+
+function render() {
+  renderNav();
   const main = document.getElementById('main');
   if (ansicht === 'training') main.innerHTML = lauf ? renderLauf() : renderEinrichtung();
   else if (ansicht === 'statistik') main.innerHTML = renderStatistik();
@@ -372,18 +390,26 @@ function render() {
 }
 
 function renderEinrichtung() {
-  const sp = daten.spieler;
+  const sp = aktiveSpieler();
   if (!sp.find(s => s.id === einst.spieler)) einst.spieler = sp.length ? sp[0].id : null;
   const nF = einst.felder.length, d = einst.durchgaenge;
 
-  let h = `<section class="karte"><h2>1. Spieler</h2>`;
-  if (!sp.length) {
-    h += `<p class="grau" style="margin-top:0">Noch kein Spieler angelegt.</p>
-      <div class="zeile"><input id="neuName" type="text" placeholder="Name" maxlength="30" autocomplete="off">
-      <button class="btn primaer" data-a="spielerNeu">Anlegen</button></div>`;
+  let h = renderOrdnerBanner() + `<section class="karte"><h2>1. Spieler</h2>`;
+  if (sp.length) {
+    h += `<div class="zeile">
+      <select class="spielerwahl" data-c="spielerWahl" aria-label="Spieler">
+        ${sp.map(s => `<option value="${s.id}" ${s.id === einst.spieler && !neuerSpielerOffen ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+        <option value="__neu" ${neuerSpielerOffen ? 'selected' : ''}>+ Neuer Spieler …</option>
+      </select>
+      <button class="btn klein" data-a="tab" data-v="spieler">Spieler verwalten</button>
+    </div>`;
   } else {
-    h += `<div class="zeile">${sp.map(s =>
-      `<button class="btn ${s.id === einst.spieler ? 'an' : ''}" data-a="waehleSpieler" data-id="${s.id}">${esc(s.name)}</button>`).join('')}</div>`;
+    h += `<p class="grau" style="margin-top:0">Noch kein Spieler angelegt.</p>`;
+  }
+  if (!sp.length || neuerSpielerOffen) {
+    h += `<div class="zeile ${sp.length ? 'abstand' : ''}"><input id="neuName" type="text" placeholder="Name des neuen Spielers" maxlength="30" autocomplete="off">
+      <button class="btn primaer" data-a="spielerNeu">Anlegen</button>
+      ${sp.length ? '<button class="btn" data-a="neuAbbrechen">Abbrechen</button>' : ''}</div>`;
   }
   h += `</section>`;
 
@@ -547,7 +573,8 @@ function renderStatistik() {
     <div class="zeile" style="margin-bottom:12px">
       <label>Spieler <select data-c="statSpieler">
         <option value="alle">Alle Spieler</option>
-        ${daten.spieler.map(s => `<option value="${s.id}" ${statF.spieler === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+        ${daten.spieler.slice().sort((a, b) => a.name.localeCompare(b.name, 'de')).map(s =>
+          `<option value="${s.id}" ${statF.spieler === s.id ? 'selected' : ''}>${esc(s.name)}${s.versteckt ? ' (entfernt)' : ''}</option>`).join('')}
       </select></label>
     </div>
     ${segment('statZeit', statF.zeitraum, [['heute', 'Heute'], ['woche', 'Diese Woche'], ['monat', 'Dieser Monat'], ['jahr', 'Dieses Jahr'], ['gesamt', 'Gesamt'], ['eigen', 'Zeitraum …']])}
@@ -638,35 +665,84 @@ function renderStatistik() {
 
 // ---------- Spieler ----------
 
+function spielerZeile(sp) {
+  const tr = daten.trainings.filter(t => t.spieler === sp.id);
+  const s = summe(tr);
+  const knoepfe = sp.versteckt
+    ? `<button class="btn klein" data-a="spielerZurueck" data-id="${sp.id}">Wieder in die Liste</button>
+       <button class="btn klein gefahr" data-a="spielerLoeschen" data-id="${sp.id}">Endgültig löschen</button>`
+    : `<button class="btn klein" data-a="umbenennen" data-id="${sp.id}">Umbenennen</button>
+       <button class="btn klein gefahr" data-a="spielerLoeschen" data-id="${sp.id}">Löschen</button>`;
+  return `<div class="spieler-zeile"><div><b>${esc(sp.name)}</b>
+    <div class="grau">${tr.length ? `${zahl(new Set(tr.map(t => t.runde)).size)} Trainings · ${zahl(s.darts)} Darts · Quote ${pct(s.quote)}` : 'noch keine Trainings'}</div></div>
+    <div class="zeile">${knoepfe}</div></div>`;
+}
+
 function renderSpieler() {
+  const aktiv = aktiveSpieler();
+  const entfernt = daten.spieler.filter(s => s.versteckt).sort((a, b) => a.name.localeCompare(b.name, 'de'));
   let h = `<section class="karte"><h2>Spieler anlegen</h2>
     <div class="zeile"><input id="neuName" type="text" placeholder="Name" maxlength="30" autocomplete="off">
     <button class="btn primaer" data-a="spielerNeu">Hinzufügen</button></div></section>`;
-  h += `<section class="karte"><h2>Spieler <span class="grau">(${daten.spieler.length})</span></h2>`;
-  if (!daten.spieler.length) h += `<p class="grau" style="margin:0">Noch keine Spieler.</p>`;
-  for (const sp of daten.spieler) {
-    const tr = daten.trainings.filter(t => t.spieler === sp.id);
-    const s = summe(tr);
-    h += `<div class="spieler-zeile"><div><b>${esc(sp.name)}</b>
-      <div class="grau">${tr.length ? `${zahl(new Set(tr.map(t => t.runde)).size)} Trainings · ${zahl(s.darts)} Darts · Quote ${pct(s.quote)}` : 'noch keine Trainings'}</div></div>
-      <div class="zeile"><button class="btn klein" data-a="umbenennen" data-id="${sp.id}">Umbenennen</button>
-      <button class="btn klein gefahr" data-a="spielerLoeschen" data-id="${sp.id}">Löschen</button></div></div>`;
+  h += `<section class="karte"><h2>Spieler <span class="grau">(${aktiv.length})</span></h2>`;
+  h += aktiv.length ? aktiv.map(spielerZeile).join('') : `<p class="grau" style="margin:0">Noch keine Spieler.</p>`;
+  h += `</section>`;
+  if (entfernt.length) {
+    h += `<section class="karte"><h2>Aus der Liste entfernt <span class="grau">(Daten bleiben in der Statistik)</span></h2>
+      ${entfernt.map(spielerZeile).join('')}</section>`;
   }
-  return h + `</section>`;
+  return h;
+}
+
+// Tippfehler-Abstand zweier Namen (Levenshtein)
+function abstand(a, b) {
+  const z = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let links = i, diag = i - 1;
+    for (let j = 1; j <= b.length; j++) {
+      const oben = z[j];
+      z[j] = Math.min(oben + 1, links + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = oben;
+      links = z[j];
+    }
+  }
+  return z[b.length];
+}
+const nameKey = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
+
+function spielerWaehlen(sp, text) {
+  if (sp.versteckt) { delete sp.versteckt; datenGeaendert(); }
+  einst.spieler = sp.id;
+  einstSpeichern();
+  neuerSpielerOffen = false;
+  render();
+  meldung(text);
 }
 
 async function spielerNeu() {
   const inp = document.getElementById('neuName');
-  const name = (inp ? inp.value : '').trim();
+  const name = (inp ? inp.value : '').trim().replace(/\s+/g, ' ');
   if (!name) { meldung('Bitte einen Namen eingeben.'); if (inp) inp.focus(); return; }
-  if (daten.spieler.some(s => s.name.toLowerCase() === name.toLowerCase())) { meldung(`„${name}“ gibt es schon.`); return; }
+  const key = nameKey(name);
+
+  const gleich = daten.spieler.find(s => nameKey(s.name) === key);
+  if (gleich) {
+    spielerWaehlen(gleich, gleich.versteckt ? `${gleich.name} ist wieder in der Liste.` : `${gleich.name} gibt es schon – ausgewählt.`);
+    return;
+  }
+  const grenze = key.length <= 4 ? 1 : 2;
+  const aehnlich = daten.spieler.find(s => abstand(nameKey(s.name), key) <= grenze);
+  if (aehnlich) {
+    const wahl = await dialog(`Es gibt schon den Spieler „${aehnlich.name}“.\nIst das ein Tippfehler?`,
+      [{ text: 'Abbrechen', wert: null }, { text: `„${name}“ neu anlegen`, wert: 'neu' }, { text: `„${aehnlich.name}“ nehmen`, wert: 'alt', art: 'primaer' }]);
+    if (!wahl) return;
+    if (wahl === 'alt') { spielerWaehlen(aehnlich, `${aehnlich.name} ausgewählt.`); return; }
+  }
+
   const sp = { id: neueId(), name, angelegt: new Date().toISOString() };
   daten.spieler.push(sp);
-  einst.spieler = sp.id;
-  einstSpeichern();
   datenGeaendert();
-  render();
-  meldung(`${name} angelegt.`);
+  spielerWaehlen(sp, `${name} angelegt.`);
   const neu = document.getElementById('neuName');
   if (neu && ansicht === 'spieler') neu.focus();
 }
@@ -676,9 +752,9 @@ async function umbenennen(id) {
   if (!sp) return;
   const name = await dialog('Neuer Name:', [{ text: 'Abbrechen', wert: null }, { text: 'Speichern', wert: true, art: 'primaer' }], sp.name);
   if (name == null) return;
-  const n = name.trim();
+  const n = name.trim().replace(/\s+/g, ' ');
   if (!n || n === sp.name) return;
-  if (daten.spieler.some(s => s.id !== id && s.name.toLowerCase() === n.toLowerCase())) { meldung(`„${n}“ gibt es schon.`); return; }
+  if (daten.spieler.some(s => s.id !== id && nameKey(s.name) === nameKey(n))) { meldung(`„${n}“ gibt es schon.`); return; }
   sp.name = n;
   datenGeaendert();
   render();
@@ -687,16 +763,49 @@ async function umbenennen(id) {
 async function spielerLoeschen(id) {
   const sp = daten.spieler.find(s => s.id === id);
   if (!sp) return;
-  if (lauf && lauf.spieler === id && !lauf.fertig) { meldung(`${sp.name} hat gerade ein laufendes Training.`); return; }
+  const laeuft = lauf && lauf.spieler === id && !lauf.fertig;
   const n = daten.trainings.filter(t => t.spieler === id).length;
-  const ok = await dialog(`Spieler „${sp.name}“ löschen?${n ? `\n\nDabei werden auch die ${n} zugehörigen Feld-Trainings gelöscht.` : ''}`,
-    [{ text: 'Abbrechen', wert: null }, { text: 'Löschen', wert: true, art: 'gefahr' }]);
-  if (!ok) return;
-  daten.spieler = daten.spieler.filter(s => s.id !== id);
-  daten.trainings = daten.trainings.filter(t => t.spieler !== id);
-  if (lauf && lauf.spieler === id) { lauf = null; laufSpeichern(); }
+
+  let wahl;
+  if (!n) {
+    wahl = await dialog(`Spieler „${sp.name}“ löschen?\n\nEs gibt noch keine Trainingsdaten.`,
+      [{ text: 'Abbrechen', wert: null }, { text: 'Löschen', wert: 'alles', art: 'gefahr' }]);
+  } else if (sp.versteckt) {
+    wahl = await dialog(`„${sp.name}“ endgültig löschen?\n\nDabei werden auch alle ${n} Feld-Trainings gelöscht. Das lässt sich nicht rückgängig machen.`,
+      [{ text: 'Abbrechen', wert: null }, { text: 'Alles löschen', wert: 'alles', art: 'gefahr' }]);
+  } else {
+    wahl = await dialog(`Spieler „${sp.name}“ löschen.\n\nSollen auch alle Trainingsdaten (${n} Feld-Trainings) gelöscht werden?\n\n` +
+      '„Nur aus der Liste“: Der Name verschwindet aus der Auswahl, die Ergebnisse bleiben in der Statistik.',
+      [{ text: 'Abbrechen', wert: null }, { text: 'Spieler und alle Daten löschen', wert: 'alles', art: 'gefahr' }, { text: 'Nur aus der Liste', wert: 'liste', art: 'primaer' }]);
+    if (wahl === 'alles') {
+      wahl = await dialog(`Wirklich alle ${n} Feld-Trainings von „${sp.name}“ endgültig löschen?`,
+        [{ text: 'Abbrechen', wert: null }, { text: 'Endgültig löschen', wert: 'alles', art: 'gefahr' }]);
+    }
+  }
+  if (!wahl) return;
+  if (wahl === 'alles' && laeuft) { meldung(`${sp.name} hat gerade ein laufendes Training.`); return; }
+
+  if (wahl === 'liste') {
+    sp.versteckt = true;
+    meldung(`${sp.name} aus der Liste entfernt. Die Daten bleiben erhalten.`);
+  } else {
+    daten.spieler = daten.spieler.filter(s => s.id !== id);
+    daten.trainings = daten.trainings.filter(t => t.spieler !== id);
+    if (lauf && lauf.spieler === id) { lauf = null; laufSpeichern(); }
+    meldung(`${sp.name} und alle Daten gelöscht.`);
+  }
+  if (einst.spieler === id) { einst.spieler = null; einstSpeichern(); }
   datenGeaendert();
   render();
+}
+
+function spielerZurueck(id) {
+  const sp = daten.spieler.find(s => s.id === id);
+  if (!sp) return;
+  delete sp.versteckt;
+  datenGeaendert();
+  render();
+  meldung(`${sp.name} ist wieder in der Liste.`);
 }
 
 // ---------- Training ----------
@@ -803,7 +912,7 @@ function datenAlsText() {
     '  "app": "Doppel 15",\n' +
     `  "version": ${VERSION},\n` +
     `  "gespeichert": ${JSON.stringify(jetzt.toISOString())},\n` +
-    '  "spieler": ' + liste(daten.spieler, s => JSON.stringify({ id: s.id, name: s.name, angelegt: s.angelegt })) + ',\n' +
+    '  "spieler": ' + liste(daten.spieler, s => JSON.stringify(s.versteckt ? { id: s.id, name: s.name, angelegt: s.angelegt, versteckt: true } : { id: s.id, name: s.name, angelegt: s.angelegt })) + ',\n' +
     '  "trainings": ' + liste(daten.trainings, t => JSON.stringify({ id: t.id, runde: t.runde, spieler: t.spieler, feld: t.feld, datum: t.datum, treffer: t.treffer })) + '\n' +
     '}\n';
   return [
@@ -839,24 +948,131 @@ function gesichert(name) {
   lsSchreiben(LS.meta, meta);
 }
 
-async function inDateiSchreiben(h, still) {
+const dateiInhalt = () => '﻿' + datenAlsText();
+
+// --- Speicherordner (Chrome/Edge): Ordner wird einmal gewählt und im Browser gemerkt (IndexedDB) ---
+
+function idb(modus, fn) {
+  return new Promise((ok, fehler) => {
+    const r = indexedDB.open('doppel15', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onerror = () => fehler(r.error);
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction('handles', modus);
+      const q = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => { db.close(); ok(q.result); };
+      tx.onerror = () => { db.close(); fehler(tx.error); };
+    };
+  });
+}
+
+async function ordnerInit() {
+  if (!fsOrdner) return;
   try {
-    const w = await h.createWritable();
-    await w.write('﻿' + datenAlsText());
+    ordner = (await idb('readonly', st => st.get('ordner'))) || null;
+    if (ordner) ordnerRecht = await ordner.queryPermission({ mode: 'readwrite' });
+  } catch (e) { ordner = null; }
+  render();
+}
+
+async function rechtHolen() {
+  ordnerRecht = await ordner.queryPermission({ mode: 'readwrite' });
+  if (ordnerRecht !== 'granted') ordnerRecht = await ordner.requestPermission({ mode: 'readwrite' });
+  return ordnerRecht === 'granted';
+}
+
+async function ordnerWaehlen() {
+  let h;
+  try {
+    h = await window.showDirectoryPicker({ id: 'doppel15', mode: 'readwrite', startIn: ordner || 'documents' });
+  } catch (e) {
+    if (e.name !== 'AbortError') meldung('Ordner konnte nicht gewählt werden: ' + e.message);
+    return;
+  }
+  ordner = h;
+  ordnerRecht = 'granted';
+  try { await idb('readwrite', st => st.put(h, 'ordner')); } catch (e) { /* dann nur bis zum Schließen gemerkt */ }
+
+  // Liegt dort schon eine Datei (z. B. von einem anderen Gerät), zuerst übernehmen statt überschreiben.
+  let vorhanden = '';
+  try { vorhanden = await (await (await h.getFileHandle(DATEINAME)).getFile()).text(); } catch (e) { /* keine Datei */ }
+  if (vorhanden.trim()) {
+    const ok = await textEinlesen(vorhanden, `${h.name}/${DATEINAME}`);
+    if (!ok) { meldung(`Ordner „${h.name}“ gewählt. Die vorhandene Datei wurde nicht verändert.`); render(); return; }
+  }
+  await inOrdnerSchreiben(false);
+  render();
+}
+
+async function ordnerVergessen() {
+  const ok = await dialog(`Ordner „${ordner.name}“ nicht mehr verwenden?\n\nDie Dateien im Ordner bleiben erhalten.`,
+    [{ text: 'Abbrechen', wert: null }, { text: 'Nicht mehr verwenden', wert: true, art: 'gefahr' }]);
+  if (!ok) return;
+  ordner = null;
+  try { await idb('readwrite', st => st.delete('ordner')); } catch (e) { /* egal */ }
+  render();
+}
+
+// Vor dem ersten Überschreiben eines Tages wird der alte Stand nach „Sicherungen“ kopiert.
+async function tagesSicherung(fh) {
+  const alt = await (await fh.getFile()).text();
+  if (!alt.trim()) return;
+  const d = new Date();
+  const name = `doppel15-daten_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.txt`;
+  const sd = await ordner.getDirectoryHandle('Sicherungen', { create: true });
+  try { await sd.getFileHandle(name); return; } catch (e) { /* heute noch keine Sicherung */ }
+  const w = await (await sd.getFileHandle(name, { create: true })).createWritable();
+  await w.write(alt);
+  await w.close();
+}
+
+async function inOrdnerSchreiben(still) {
+  if (!ordner) return false;
+  try {
+    if (still) {
+      ordnerRecht = await ordner.queryPermission({ mode: 'readwrite' });
+      if (ordnerRecht !== 'granted') { if (ansicht !== 'training' || !lauf) render(); return false; }
+    } else if (!(await rechtHolen())) {
+      meldung('Der Zugriff auf den Ordner wurde nicht erlaubt.');
+      render();
+      return false;
+    }
+    const fh = await ordner.getFileHandle(DATEINAME, { create: true });
+    await tagesSicherung(fh);
+    const w = await fh.createWritable();
+    await w.write(dateiInhalt());
     await w.close();
-    gesichert(h.name);
-    if (!still) meldung(`Gespeichert in „${h.name}“.`);
-    else if (ansicht === 'daten') render();
+    gesichert(`${ordner.name}/${DATEINAME}`);
+    if (!still) meldung(`Gespeichert im Ordner „${ordner.name}“.`);
+    if (ansicht === 'daten' || !still) render();
+    else renderNav();
     return true;
   } catch (e) {
-    if (still) { autoDatei = false; meldung('Automatisches Speichern in die Datei ist fehlgeschlagen.'); }
-    else meldung('Speichern fehlgeschlagen: ' + e.message);
+    meldung(`${still ? 'Automatisches ' : ''}Speichern im Ordner fehlgeschlagen: ${e.message}`);
     return false;
   }
 }
 
+async function zugriffErlauben() {
+  if (!ordner) return;
+  if (await rechtHolen()) {
+    if (meta.ungesichert) await inOrdnerSchreiben(true);
+    meldung(`Automatisches Speichern in „${ordner.name}“ ist aktiv.`);
+  }
+  render();
+}
+
+function renderOrdnerBanner() {
+  if (!ordner || !meta.autoOrdner || ordnerRecht === 'granted') return '';
+  return `<div class="banner"><span>Automatisches Speichern in „${esc(ordner.name)}“ ist pausiert.</span>
+    <button class="btn klein" data-a="zugriff">Zugriff erlauben</button></div>`;
+}
+
+// --- Ohne Ordner-Zugriff: Download oder (Handy/Tablet) „In Dateien sichern“ ---
+
 function herunterladen() {
-  const blob = new Blob(['﻿' + datenAlsText()], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([dateiInhalt()], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -867,32 +1083,29 @@ function herunterladen() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   gesichert(DATEINAME);
   meldung(`„${DATEINAME}“ wurde heruntergeladen.`);
+  render();
 }
 
-async function dateiSpeichern(neueDatei) {
-  if (!fsApi) { herunterladen(); render(); return; }
-  if (!dateiHandle || neueDatei) {
-    try {
-      dateiHandle = await window.showSaveFilePicker({
-        suggestedName: DATEINAME,
-        types: [{ description: 'Textdatei', accept: { 'text/plain': ['.txt'] } }]
-      });
-    } catch (e) {
-      if (e.name !== 'AbortError') herunterladen();
-      render();
-      return;
-    }
+async function teilen() {
+  // navigator.share direkt im Klick aufrufen, sonst verweigert der Browser
+  try {
+    await navigator.share({ files: [new File([dateiInhalt()], DATEINAME, { type: 'text/plain' })], title: 'Doppel 15 – Daten' });
+    gesichert(DATEINAME);
+    render();
+  } catch (e) {
+    if (e.name !== 'AbortError') meldung('Sichern fehlgeschlagen: ' + e.message);
   }
-  await inDateiSchreiben(dateiHandle, false);
-  render();
 }
 
 async function dateiLaden() {
   if (typeof window.showOpenFilePicker === 'function') {
     try {
-      const [h] = await window.showOpenFilePicker({ multiple: false, types: [{ description: 'Textdatei', accept: { 'text/plain': ['.txt'] } }] });
+      const [h] = await window.showOpenFilePicker({
+        multiple: false, startIn: ordner || 'documents',
+        types: [{ description: 'Textdatei', accept: { 'text/plain': ['.txt'] } }]
+      });
       const f = await h.getFile();
-      if (await textEinlesen(await f.text(), f.name)) { dateiHandle = h; render(); }
+      await textEinlesen(await f.text(), f.name);
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
@@ -937,7 +1150,7 @@ async function textEinlesen(text, name) {
     const nurHier = daten.trainings.some(t => !dateiIds.has(t.id));
     const idMap = {};
     for (const s of neu.spieler) {
-      const da = daten.spieler.find(x => x.id === s.id) || daten.spieler.find(x => x.name.toLowerCase() === s.name.toLowerCase());
+      const da = daten.spieler.find(x => x.id === s.id) || daten.spieler.find(x => nameKey(x.name) === nameKey(s.name));
       if (da) idMap[s.id] = da.id;
       else { daten.spieler.push({ ...s }); idMap[s.id] = s.id; }
     }
@@ -953,6 +1166,9 @@ async function textEinlesen(text, name) {
     if (nurHier) { meta.ungesichert = true; lsSchreiben(LS.meta, meta); } else gesichert(name);
     meldung(`${dazu} Feld-Trainings hinzugefügt.`);
   }
+  if (ordner && meta.autoOrdner && ordnerRecht === 'granted' && meta.ungesichert) {
+    schreibKette = schreibKette.then(() => inOrdnerSchreiben(true));
+  }
   render();
   return true;
 }
@@ -966,24 +1182,58 @@ function renderDaten() {
     const d = meta.letzteDatei ? new Date(meta.letzteDatei) : null;
     status = `<p class="ok">✓ Alles in einer txt-Datei gesichert${d ? ` (${fmtDatum(d)} ${fmtZeit(d)}${meta.dateiName ? `, „${esc(meta.dateiName)}“` : ''})` : ''}.</p>`;
   }
+
+  let datei;
+  if (fsOrdner) {
+    datei = ordner
+      ? `<p style="margin-top:0">Speicherordner: <b>„${esc(ordner.name)}“</b> – Datei „${DATEINAME}“</p>
+        ${renderOrdnerBanner()}
+        <div class="zeile">
+          <button class="btn primaer" data-a="ordnerSpeichern">Jetzt speichern</button>
+          <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
+          <button class="btn" data-a="ordnerWaehlen">Anderen Ordner …</button>
+          <button class="btn klein gefahr" data-a="ordnerVergessen">Ordner nicht mehr verwenden</button>
+        </div>
+        <div class="zeile abstand"><label><input type="checkbox" data-c="autoOrdner" ${meta.autoOrdner ? 'checked' : ''}> Nach jedem Feld automatisch speichern</label></div>
+        <p class="hinweis">Vor dem ersten Speichern eines Tages wird der alte Stand im Unterordner „Sicherungen“ aufgehoben.
+          Nach einem Neustart des Browsers fragt Chrome/Edge eventuell einmal nach, ob der Zugriff wieder erlaubt ist
+          („Bei jedem Besuch erlauben“ wählen, dann nicht mehr).</p>`
+      : `<p style="margin-top:0">Wählen Sie einmal den Ordner, in dem die Daten liegen sollen – z. B. <b>„dateien doppel_15“</b>
+          (im Auswahlfenster mit „Neuer Ordner“ anlegen). Danach wird automatisch dorthin gespeichert, nicht mehr in „Downloads“.</p>
+        <div class="zeile">
+          <button class="btn primaer" data-a="ordnerWaehlen">Speicherordner wählen …</button>
+          <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
+        </div>
+        <p class="hinweis">Liegt im gewählten Ordner schon eine Datei „${DATEINAME}“, wird sie zuerst übernommen.</p>`;
+  } else if (kannTeilen) {
+    datei = `<div class="zeile">
+        <button class="btn primaer" data-a="teilen">In Dateien sichern …</button>
+        <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
+        <button class="btn klein" data-a="herunterladen">Herunterladen</button>
+      </div>
+      <p class="hinweis">„In Dateien sichern“ antippen und den Ordner <b>„dateien doppel_15“</b> auswählen
+        (beim ersten Mal dort mit „Neuer Ordner“ anlegen). Wenn gefragt wird: vorhandene Datei <b>ersetzen</b>.
+        Auf Android z. B. „Drive“ oder „In Dateien speichern“ wählen.</p>`;
+  } else {
+    datei = `<div class="zeile">
+        <button class="btn primaer" data-a="herunterladen">In txt-Datei speichern</button>
+        <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
+      </div>
+      <p class="hinweis">Dieser Browser speichert in seinen Download-Ordner. Damit die Datei im Ordner „dateien doppel_15“ landet:
+        <b>Firefox:</b> Einstellungen → Allgemein → Downloads → „Jedes Mal nachfragen, wo eine Datei gespeichert werden soll“.
+        <b>Safari (Mac):</b> Einstellungen → Allgemein → „Speicherort für geladene Dateien“ → „Andere …“ (gilt für alle Downloads).
+        Am einfachsten: das Spiel in <b>Chrome oder Edge</b> öffnen – dort wird direkt in den Ordner gespeichert.</p>`;
+  }
+
   return `<section class="karte"><h2>Speicherung</h2>
       ${speicherOk
         ? '<p class="ok" style="margin-top:0">✓ Alle Trainings werden automatisch in diesem Browser gespeichert.</p>'
         : '<p class="warnung" style="margin-top:0">⚠ Dieser Browser erlaubt kein automatisches Speichern (z. B. privates Fenster). Bitte nach dem Training unbedingt in eine txt-Datei speichern.</p>'}
       ${status}
-      <p class="hinweis">Der Browser-Speicher gilt nur für diesen Browser auf diesem Gerät. Zur Sicherung und zum Übertragen auf ein anderes Gerät die Daten als txt-Datei speichern.</p>
+      <p class="hinweis">Der Browser-Speicher gilt nur für diesen Browser auf diesem Gerät. Die txt-Datei dient zur Sicherung und zum Übertragen auf andere Geräte.</p>
     </section>
     <section class="karte"><h2>txt-Datei</h2>
-      <div class="zeile">
-        <button class="btn primaer" data-a="dateiSpeichern">${dateiHandle ? `In „${esc(dateiHandle.name)}“ speichern` : 'In txt-Datei speichern'}</button>
-        ${dateiHandle ? '<button class="btn" data-a="speichernUnter">Andere Datei …</button>' : ''}
-        <button class="btn" data-a="dateiLaden">Aus txt-Datei laden</button>
-      </div>
-      ${fsApi
-        ? (dateiHandle
-            ? `<div class="zeile abstand"><label><input type="checkbox" data-c="auto" ${autoDatei ? 'checked' : ''}> Nach jedem Feld automatisch in diese Datei schreiben</label></div>`
-            : '<p class="hinweis">Nach der ersten Auswahl schreibt dieser Browser bis zum Schließen der Seite immer in dieselbe Datei.</p>')
-        : `<p class="hinweis">Dieser Browser speichert die Datei als Download (meist im Ordner „Downloads“). Bei wiederholtem Speichern entstehen Namen wie „doppel15-daten (1).txt“ – die neueste Datei enthält immer alles.</p>`}
+      ${datei}
       <p class="hinweis">Beim Laden kann man wählen, ob die Datei den Stand hier ersetzt oder mit ihm zusammengeführt wird.</p>
     </section>
     <section class="karte"><h2>Übersicht</h2>
@@ -1002,7 +1252,7 @@ function setDg(n) {
 
 const aktionen = {
   tab: el => { ansicht = el.dataset.v; render(); window.scrollTo(0, 0); },
-  waehleSpieler: el => { einst.spieler = el.dataset.id; einstSpeichern(); render(); },
+  neuAbbrechen: () => { neuerSpielerOffen = false; render(); },
   feld: el => {
     const f = Number(el.dataset.f), i = einst.felder.indexOf(f);
     if (i >= 0) einst.felder.splice(i, 1); else einst.felder.push(f);
@@ -1025,6 +1275,7 @@ const aktionen = {
   spielerNeu: () => spielerNeu(),
   umbenennen: el => umbenennen(el.dataset.id),
   spielerLoeschen: el => spielerLoeschen(el.dataset.id),
+  spielerZurueck: el => spielerZurueck(el.dataset.id),
   statZeit: el => { statF.zeitraum = el.dataset.w; statF.alle = false; statSpeichern(); render(); },
   statGruppe: el => { statF.gruppe = el.dataset.w; statSpeichern(); render(); },
   statSort: el => { statF.sort = el.dataset.w; statSpeichern(); render(); },
@@ -1040,8 +1291,12 @@ const aktionen = {
     datenGeaendert();
     render();
   },
-  dateiSpeichern: () => dateiSpeichern(false),
-  speichernUnter: () => dateiSpeichern(true),
+  ordnerWaehlen: () => ordnerWaehlen(),
+  ordnerSpeichern: () => inOrdnerSchreiben(false),
+  ordnerVergessen: () => ordnerVergessen(),
+  zugriff: () => zugriffErlauben(),
+  teilen: () => teilen(),
+  herunterladen: () => herunterladen(),
   dateiLaden: () => dateiLaden()
 };
 
@@ -1056,12 +1311,27 @@ document.addEventListener('change', e => {
   const c = e.target.dataset.c;
   if (!c) return;
   if (c === 'dg') setDg(parseInt(e.target.value, 10));
+  else if (c === 'spielerWahl') {
+    if (e.target.value === '__neu') {
+      neuerSpielerOffen = true;
+      render();
+      const inp = document.getElementById('neuName');
+      if (inp) inp.focus();
+    } else {
+      einst.spieler = e.target.value;
+      neuerSpielerOffen = false;
+      einstSpeichern();
+      render();
+    }
+  }
   else if (c === 'statSpieler') { statF.spieler = e.target.value; statF.alle = false; statSpeichern(); render(); }
   else if (c === 'statVon') { statF.von = e.target.value; statSpeichern(); render(); }
   else if (c === 'statBis') { statF.bis = e.target.value; statSpeichern(); render(); }
-  else if (c === 'auto') {
-    autoDatei = e.target.checked;
-    if (autoDatei && dateiHandle) inDateiSchreiben(dateiHandle, false);
+  else if (c === 'autoOrdner') {
+    meta.autoOrdner = e.target.checked;
+    lsSchreiben(LS.meta, meta);
+    if (meta.autoOrdner && meta.ungesichert) inOrdnerSchreiben(false);
+    else render();
   }
 });
 
@@ -1085,6 +1355,7 @@ document.addEventListener('keydown', e => {
 
 if (lauf && !lauf.fertig) wachHalten(true);
 render();
+ordnerInit();
 </script>
 </body>
 </html>
