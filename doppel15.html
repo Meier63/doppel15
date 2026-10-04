@@ -135,6 +135,21 @@ label { display: inline-flex; align-items: center; gap: 8px; }
 .treffer-knoepfe .t1 { background: #1b3326; border-color: #2c6b48; }
 .treffer-knoepfe .t2 { background: #1a4a30; border-color: #2f8c57; }
 .treffer-knoepfe .t3 { background: #1d6b40; border-color: #3ccf7f; }
+.treffer-knoepfe.zwei { grid-template-columns: 1fr 1fr; }
+.treffer-knoepfe.zwei .btn { font-size: clamp(30px, 7vw, 56px); }
+.dart-punkte { display: flex; gap: 14px; justify-content: center; margin: 10px 0 4px; }
+.dart-punkt { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #4c5d54; }
+.dart-punkt.jetzt { border-color: var(--gelb); box-shadow: 0 0 0 3px rgba(242,194,48,.25); }
+.dart-punkt.hit { background: var(--gruen); border-color: #3ccf7f; }
+.dart-punkt.miss { background: #5a3434; border-color: #7a4444; }
+.zahlen-raster { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; margin: 12px 0 16px; }
+.zahlen-raster .btn { min-height: 72px; font-size: 30px; font-weight: 800; }
+.zahlen-raster .null { background: #2a1f1f; border-color: #5a3434; }
+.zahlen-raster .gut { background: #1b3326; border-color: #2c6b48; }
+.eingabe-wahl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.eingabe-wahl .btn { flex-direction: column; gap: 2px; min-height: 76px; }
+.eingabe-wahl .btn small { font-weight: 400; font-size: 14px; opacity: .8; }
+@media (max-width: 560px) { .eingabe-wahl { grid-template-columns: 1fr; } }
 
 /* Statistik */
 .kacheln { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
@@ -200,7 +215,7 @@ select.spielerwahl { flex: 1; min-width: 220px; max-width: 480px; font-size: 22p
 
 // ---------- Grundlagen ----------
 
-const VERSION = 1;                       // Datenformat der txt-Datei
+const VERSION = 2;                       // Datenformat der txt-Datei
 const DATEINAME = 'doppel15-daten.txt';
 const LS = {
   daten: 'doppel15.daten',
@@ -255,26 +270,37 @@ function normalisieren(o) {
       return sp;
     });
   const ids = new Set(spieler.map(s => s.id));
-  const trainings = (Array.isArray(o.trainings) ? o.trainings : [])
-    .filter(t => t && t.id && ids.has(String(t.spieler)) && FELDER.includes(Number(t.feld)) &&
-                 Array.isArray(t.treffer) && t.treffer.length && !isNaN(Date.parse(t.datum)))
-    .map(t => ({
-      id: String(t.id),
-      runde: String(t.runde || t.id),
-      spieler: String(t.spieler),
-      feld: Number(t.feld),
-      datum: t.datum,
-      treffer: t.treffer.map(n => Math.max(0, Math.min(3, Math.round(Number(n) || 0))))
-    }));
+  const trainings = [];
+  for (const t of (Array.isArray(o.trainings) ? o.trainings : [])) {
+    if (!t || !t.id || !ids.has(String(t.spieler)) || !FELDER.includes(Number(t.feld)) || isNaN(Date.parse(t.datum))) continue;
+    const r = { id: String(t.id), runde: String(t.runde || t.id), spieler: String(t.spieler), feld: Number(t.feld), datum: t.datum };
+    if (Array.isArray(t.darts) && t.darts.length >= 3) {
+      r.darts = t.darts.slice(0, Math.floor(t.darts.length / 3) * 3).map(d => (Number(d) ? 1 : 0));
+      r.treffer = inDurchgaenge(r.darts);
+    } else if (Array.isArray(t.treffer) && t.treffer.length) {
+      r.treffer = t.treffer.map(n => Math.max(0, Math.min(3, Math.round(Number(n) || 0))));
+    }
+    if (r.treffer) {
+      r.durchgaenge = r.treffer.length;
+      r.gesamt = r.treffer.reduce((a, b) => a + b, 0);
+    } else {
+      r.durchgaenge = Math.round(Number(t.durchgaenge) || 0);
+      if (r.durchgaenge < 1) continue;
+      r.gesamt = Math.max(0, Math.min(r.durchgaenge * 3, Math.round(Number(t.gesamt) || 0)));
+    }
+    r.eingabe = r.darts ? 'dart' : r.treffer ? 'durchgang' : 'feld';
+    trainings.push(r);
+  }
   trainings.sort((a, b) => Date.parse(a.datum) - Date.parse(b.datum));
   return { spieler, trainings };
 }
 
 let daten = normalisieren(lsLesen(LS.daten)) || { spieler: [], trainings: [] };
 let meta = Object.assign({ ungesichert: false, letzteDatei: null, dateiName: null, autoOrdner: true }, lsLesen(LS.meta) || {});
-let einst = Object.assign({ spieler: null, felder: [20], durchgaenge: 5, reihenfolge: 'auf' }, lsLesen(LS.einst) || {});
+let einst = Object.assign({ spieler: null, felder: [20], durchgaenge: 5, reihenfolge: 'auf', eingabeJe: {} }, lsLesen(LS.einst) || {});
 let statF = Object.assign({ spieler: 'alle', zeitraum: 'monat', von: '', bis: '', gruppe: 'tag', sort: 'feld', alle: false }, lsLesen(LS.stat) || {});
 let lauf = lsLesen(LS.lauf);             // laufendes Training
+if (lauf) { lauf.eingabe = lauf.eingabe || 'durchgang'; lauf.darts = lauf.darts || []; lauf.aktuell = lauf.aktuell || []; }
 let ansicht = 'training';
 let ordner = null;                       // nur Chrome/Edge: gewählter Speicherordner
 let ordnerRecht = 'prompt';              // granted | prompt | denied
@@ -299,8 +325,15 @@ const spielerName = id => (daten.spieler.find(s => s.id === id) || { name: '?' }
 
 function summe(liste) {
   let dg = 0, t = 0;
-  for (const r of liste) { dg += r.treffer.length; for (const n of r.treffer) t += n; }
+  for (const r of liste) { dg += r.durchgaenge; t += r.gesamt; }
   return { dg, darts: dg * 3, treffer: t, quote: dg ? t / (dg * 3) : null };
+}
+
+// Kurzanzeige der Einzelwerte eines Feld-Trainings
+function detailText(r) {
+  if (r.darts) return r.treffer.map((x, i) => r.darts.slice(i * 3, i * 3 + 3).map(d => (d ? '●' : '○')).join('')).join(' ');
+  if (r.treffer) return r.treffer.join(' · ');
+  return 'nur Gesamt';
 }
 
 function balken(q) {
@@ -438,6 +471,15 @@ function renderEinrichtung() {
     <p class="hinweis">${d} Durchgänge = ${d * 3} Darts je Feld</p>
   </section>`;
 
+  const art = eingabeVon(einst.spieler);
+  h += `<section class="karte"><h2>4. Eingabe${einst.spieler ? ` <span class="grau">(für ${esc(spielerName(einst.spieler))} gemerkt)</span>` : ''}</h2>
+    <div class="eingabe-wahl">
+      <button class="btn ${art === 'dart' ? 'an' : ''}" data-a="eingabeArt" data-w="dart">Jeder Dart einzeln<small>Treffer / Daneben je Dart</small></button>
+      <button class="btn ${art === 'durchgang' ? 'an' : ''}" data-a="eingabeArt" data-w="durchgang">Je Durchgang<small>0–3 Treffer je 3 Darts</small></button>
+      <button class="btn ${art === 'feld' ? 'an' : ''}" data-a="eingabeArt" data-w="feld">Je Feld<small>Treffer gesamt nach ${d * 3} Darts</small></button>
+    </div>
+  </section>`;
+
   const bereit = einst.spieler && nF;
   h += `<button class="btn primaer gross" data-a="start" ${bereit ? '' : 'disabled'}>${
     bereit ? `Start: ${nF === 1 ? feldName(einst.felder[0]) : nF + ' Felder'} × ${d} Durchgänge = ${zahl(nF * d * 3)} Darts`
@@ -450,13 +492,14 @@ function renderLauf() {
   if (L.fertig) return renderZusammenfassung();
   const name = esc(spielerName(L.spieler));
   const feldText = L.felder.length > 1 ? ` · Feld ${L.idx + 1} von ${L.felder.length}` : '';
+  const fname = feldName(L.felder[L.idx]);
 
   if (L.pause) {
     const rec = daten.trainings.find(t => t.id === L.erledigt[L.erledigt.length - 1]);
     const s = summe(rec ? [rec] : []);
     return `<section class="karte anzeige">
         <div class="info">${name}${feldText}</div>
-        <div class="feld">${feldName(L.felder[L.idx])}</div>
+        <div class="feld">${fname}</div>
         <div class="stand">${s.treffer} von ${s.darts} Darts</div>
         <div class="quote-gross">${pct(s.quote)}</div>
       </section>
@@ -467,16 +510,66 @@ function renderLauf() {
       </div>`;
   }
 
+  const kannRueck = offeneEingaben(L) > 0 || L.erledigt.length > 0;
+  const fuss = (hinweis) => `<div class="zeile mitte">
+      <button class="btn" data-a="rueck" ${kannRueck ? '' : 'disabled'}>↶ Rückgängig</button>
+      <button class="btn gefahr" data-a="beenden">Training beenden</button>
+    </div>
+    ${hinweis ? `<p class="hinweis" style="text-align:center">${hinweis}</p>` : ''}`;
+
+  // Je Feld: erst alle Darts werfen, dann Gesamtzahl eingeben
+  if (L.eingabe === 'feld') {
+    const max = L.durchgaenge * 3;
+    const auswahl = max <= 60
+      ? `<div class="zahlen-raster">${Array.from({ length: max + 1 }, (_, n) =>
+          `<button class="btn ${n ? 'gut' : 'null'}" data-a="feldGesamt" data-n="${n}">${n}</button>`).join('')}</div>`
+      : `<div class="zeile mitte"><span class="zahl">
+          <input id="gesamtZahl" type="number" min="0" max="${max}" inputmode="numeric" value="0" aria-label="Treffer">
+        </span><button class="btn primaer" data-a="feldGesamtFeld">Übernehmen</button></div>`;
+    return `<section class="karte anzeige">
+        <div class="info">${name}${feldText}</div>
+        <div class="feld">${fname}</div>
+        <div class="stand">${max} Darts werfen <span class="grau">(${L.durchgaenge} × 3)</span></div>
+      </section>
+      <div class="frage">Danach: Wie viele Doppel von ${max} Darts getroffen?</div>
+      ${auswahl}
+      ${fuss('')}`;
+  }
+
+  // Jeder Dart einzeln
+  if (L.eingabe === 'dart') {
+    const n = L.darts.length;
+    const t = L.darts.reduce((a, b) => a + b, 0);
+    const fertigeDg = inDurchgaenge(L.darts.slice(0, Math.floor(n / 3) * 3));
+    const imDg = L.darts.slice(Math.floor(n / 3) * 3);
+    let chips = fertigeDg.map(x => `<span class="chip t${x}">${x}</span>`).join('');
+    for (let i = fertigeDg.length + 1; i < L.durchgaenge; i++) chips += `<span class="chip leer">·</span>`;
+    const punkte = [0, 1, 2].map(i => `<span class="dart-punkt ${i < imDg.length ? (imDg[i] ? 'hit' : 'miss') : (i === imDg.length ? 'jetzt' : '')}"></span>`).join('');
+    return `<section class="karte anzeige">
+        <div class="info">${name}${feldText}</div>
+        <div class="feld">${fname}</div>
+        <div class="info">Durchgang <b style="color:var(--text)">${fertigeDg.length + 1}</b> von ${L.durchgaenge} · Dart <b style="color:var(--text)">${imDg.length + 1}</b></div>
+        <div class="dart-punkte">${punkte}</div>
+        <div class="stand">${t} Treffer <span class="grau">aus ${n} Darts${n ? ' · ' + pct(t / n) : ''}</span></div>
+        <div class="chips">${chips}</div>
+      </section>
+      <div class="treffer-knoepfe zwei">
+        <button class="btn t0" data-a="dart" data-n="0">Daneben</button>
+        <button class="btn t3" data-a="dart" data-n="1">Treffer</button>
+      </div>
+      ${fuss('Mit Tastatur: 1 = Treffer, 0 = daneben, Rücktaste = rückgängig')}`;
+  }
+
+  // Je Durchgang (3 Darts)
   const dg = L.aktuell.length;
   const t = L.aktuell.reduce((a, b) => a + b, 0);
   let chips = '';
   for (let i = 0; i < L.durchgaenge; i++) {
     chips += i < dg ? `<span class="chip t${L.aktuell[i]}">${L.aktuell[i]}</span>` : `<span class="chip leer">·</span>`;
   }
-  const kannRueck = dg > 0 || L.erledigt.length > 0;
   return `<section class="karte anzeige">
       <div class="info">${name}${feldText}</div>
-      <div class="feld">${feldName(L.felder[L.idx])}</div>
+      <div class="feld">${fname}</div>
       <div class="info">Durchgang <b style="color:var(--text)">${dg + 1}</b> von ${L.durchgaenge}</div>
       <div class="stand">${t} Treffer <span class="grau">aus ${dg * 3} Darts${dg ? ' · ' + pct(t / (dg * 3)) : ''}</span></div>
       <div class="chips">${chips}</div>
@@ -484,11 +577,7 @@ function renderLauf() {
     <div class="frage">Wie viele Doppel getroffen?</div>
     <div class="treffer-knoepfe">${[0, 1, 2, 3].map(n =>
       `<button class="btn t${n}" data-a="treffer" data-n="${n}">${n}</button>`).join('')}</div>
-    <div class="zeile mitte">
-      <button class="btn" data-a="rueck" ${kannRueck ? '' : 'disabled'}>↶ Rückgängig</button>
-      <button class="btn gefahr" data-a="beenden">Training beenden</button>
-    </div>
-    <p class="hinweis" style="text-align:center">Mit Tastatur: 0–3 eingeben, Rücktaste = rückgängig</p>`;
+    ${fuss('Mit Tastatur: 0–3 eingeben, Rücktaste = rückgängig')}`;
 }
 
 function renderZusammenfassung() {
@@ -502,10 +591,10 @@ function renderZusammenfassung() {
     </section>`;
   if (recs.length) {
     h += `<section class="karte"><h2>Ergebnis je Feld</h2><div class="tabelle"><table>
-      <tr><th>Feld</th><th class="z">Treffer</th><th class="z">Darts</th><th class="z">Quote</th><th>Durchgänge</th></tr>
+      <tr><th>Feld</th><th class="z">Treffer</th><th class="z">Darts</th><th class="z">Quote</th><th>Einzelwerte</th></tr>
       ${recs.map(r => { const x = summe([r]); return `<tr><td class="feldname">${feldName(r.feld)}</td>
         <td class="z">${x.treffer}</td><td class="z">${x.darts}</td><td class="z">${pct(x.quote)}</td>
-        <td class="detail">${r.treffer.join(' · ')}</td></tr>`; }).join('')}
+        <td class="detail">${detailText(r)}</td></tr>`; }).join('')}
     </table></div></section>`;
   }
   h += `<button class="btn primaer gross" data-a="nochmal">Gleiches Training nochmal</button>
@@ -597,12 +686,24 @@ function renderStatistik() {
     <div class="kachel"><b>${pct(s.quote)}</b><span>Quote</span></div>
   </div>`;
 
-  // Verteilung der Treffer je Durchgang
+  // Verteilung der Treffer je Durchgang (nur wo je Durchgang oder je Dart eingegeben wurde)
   const vert = [0, 0, 0, 0];
-  for (const t of liste) for (const n of t.treffer) vert[n]++;
-  h += `<section class="karte"><h2>Treffer je Durchgang <span class="grau">(${zahl(s.dg)} Durchgänge)</span></h2>
-    <div class="kacheln">${vert.map((v, n) =>
-      `<div class="kachel"><b>${zahl(v)}×</b><span>${n} Treffer · ${pct(v / s.dg)}</span></div>`).join('')}</div></section>`;
+  for (const t of liste) if (t.treffer) for (const n of t.treffer) vert[n]++;
+  const vdg = vert.reduce((a, b) => a + b, 0);
+  if (vdg) {
+    h += `<section class="karte"><h2>Treffer je Durchgang <span class="grau">(${zahl(vdg)} Durchgänge${vdg < s.dg ? ', ohne „nur Gesamt“' : ''})</span></h2>
+      <div class="kacheln">${vert.map((v, n) =>
+        `<div class="kachel"><b>${zahl(v)}×</b><span>${n} Treffer · ${pct(v / vdg)}</span></div>`).join('')}</div></section>`;
+  }
+
+  // Treffer nach 1., 2., 3. Dart (nur wo jeder Dart einzeln eingegeben wurde)
+  const pos = [[0, 0], [0, 0], [0, 0]];
+  for (const t of liste) if (t.darts) t.darts.forEach((d, i) => { pos[i % 3][0] += d; pos[i % 3][1]++; });
+  if (pos[0][1]) {
+    h += `<section class="karte"><h2>Treffer nach Dart <span class="grau">(${zahl(pos[0][1])} Durchgänge mit Einzel-Darts)</span></h2>
+      <div class="kacheln" style="grid-template-columns:repeat(3,1fr)">${pos.map(([t, n], i) =>
+        `<div class="kachel"><b>${pct(t / n)}</b><span>${i + 1}. Dart · ${zahl(t)} von ${zahl(n)}</span></div>`).join('')}</div></section>`;
+  }
 
   // Je Feld
   let felder = FELDER.map(f => ({ f, ...summe(liste.filter(t => t.feld === f)) }));
@@ -650,12 +751,12 @@ function renderStatistik() {
   const sortiert = liste.slice().sort((a, b) => Date.parse(b.datum) - Date.parse(a.datum));
   const zeige = statF.alle ? sortiert : sortiert.slice(0, 30);
   h += `<section class="karte"><h2>Einzelne Trainings <span class="grau">(je Feld)</span></h2><div class="tabelle"><table>
-    <tr><th>Datum</th>${statF.spieler === 'alle' ? '<th>Spieler</th>' : ''}<th>Feld</th><th class="z">Treffer</th><th class="z">Quote</th><th>Durchgänge</th><th></th></tr>
+    <tr><th>Datum</th>${statF.spieler === 'alle' ? '<th>Spieler</th>' : ''}<th>Feld</th><th class="z">Treffer</th><th class="z">Quote</th><th>Einzelwerte</th><th></th></tr>
     ${zeige.map(t => { const x = summe([t]); const d = new Date(t.datum); return `<tr>
       <td style="white-space:nowrap">${fmtDatum(d)} <span class="grau">${fmtZeit(d)}</span></td>
       ${statF.spieler === 'alle' ? `<td>${esc(spielerName(t.spieler))}</td>` : ''}
       <td class="feldname">${feldName(t.feld)}</td><td class="z">${x.treffer}/${x.darts}</td><td class="z">${pct(x.quote)}</td>
-      <td class="detail">${t.treffer.join(' · ')}</td>
+      <td class="detail">${detailText(t)}</td>
       <td class="z"><button class="btn klein gefahr" data-a="trLoeschen" data-id="${t.id}" aria-label="Löschen">✕</button></td></tr>`; }).join('')}
   </table></div>
   ${sortiert.length > 30 && !statF.alle ? `<div class="zeile abstand"><button class="btn klein" data-a="statAlle">Alle ${sortiert.length} anzeigen</button></div>` : ''}
@@ -810,8 +911,27 @@ function spielerZurueck(id) {
 
 // ---------- Training ----------
 
+const EINGABEN = {
+  dart: 'Jeder Dart einzeln',
+  durchgang: 'Je Durchgang (3 Darts)',
+  feld: 'Je Feld (gesamt)'
+};
+const eingabeVon = id => (einst.eingabeJe && EINGABEN[einst.eingabeJe[id]] ? einst.eingabeJe[id] : 'durchgang');
+
+function inDurchgaenge(darts) {
+  const r = [];
+  for (let i = 0; i + 3 <= darts.length; i += 3) r.push(darts[i] + darts[i + 1] + darts[i + 2]);
+  return r;
+}
+
+function offeneEingaben(L) {
+  if (L.eingabe === 'dart') return L.darts.length;
+  if (L.eingabe === 'feld') return 0;
+  return L.aktuell.length;
+}
+
 function starten(o) {
-  o = o || { spieler: einst.spieler, felder: einst.felder.slice(), durchgaenge: einst.durchgaenge, reihenfolge: einst.reihenfolge };
+  o = o || { spieler: einst.spieler, felder: einst.felder.slice(), durchgaenge: einst.durchgaenge, reihenfolge: einst.reihenfolge, eingabe: eingabeVon(einst.spieler) };
   if (!o.spieler || !o.felder.length) return;
   const folge = o.felder.slice().sort((a, b) => a - b);
   if (o.reihenfolge === 'zufall') {
@@ -819,7 +939,8 @@ function starten(o) {
   }
   lauf = {
     runde: neueId(), spieler: o.spieler, felder: folge, auswahl: o.felder.slice(), reihenfolge: o.reihenfolge,
-    durchgaenge: o.durchgaenge, idx: 0, aktuell: [], erledigt: [], pause: false, fertig: false, abgebrochen: false
+    durchgaenge: o.durchgaenge, eingabe: o.eingabe || 'durchgang',
+    idx: 0, aktuell: [], darts: [], erledigt: [], pause: false, fertig: false, abgebrochen: false
   };
   laufSpeichern();
   wachHalten(true);
@@ -827,24 +948,64 @@ function starten(o) {
   window.scrollTo(0, 0);
 }
 
-function feldSpeichern(L) {
-  const rec = { id: neueId(), runde: L.runde, spieler: L.spieler, feld: L.felder[L.idx], datum: new Date().toISOString(), treffer: L.aktuell.slice() };
+// Speichert das aktuelle Feld als Datensatz. Gibt false zurück, wenn es nichts zu speichern gibt.
+function feldSpeichern(L, gesamt) {
+  const rec = { id: neueId(), runde: L.runde, spieler: L.spieler, feld: L.felder[L.idx], datum: new Date().toISOString(), eingabe: L.eingabe };
+  if (L.eingabe === 'dart') {
+    rec.darts = L.darts.slice(0, Math.floor(L.darts.length / 3) * 3);   // nur vollständige Durchgänge
+    rec.treffer = inDurchgaenge(rec.darts);
+  } else if (L.eingabe === 'feld') {
+    rec.durchgaenge = L.durchgaenge;
+    rec.gesamt = gesamt;
+  } else {
+    rec.treffer = L.aktuell.slice();
+  }
+  if (rec.treffer) { rec.durchgaenge = rec.treffer.length; rec.gesamt = rec.treffer.reduce((a, b) => a + b, 0); }
+  L.aktuell = [];
+  L.darts = [];
+  if (!rec.durchgaenge) return false;
   daten.trainings.push(rec);
   L.erledigt.push(rec.id);
-  L.aktuell = [];
   datenGeaendert();
+  return true;
+}
+
+function feldAbschliessen(L, gesamt) {
+  feldSpeichern(L, gesamt);
+  if (L.idx >= L.felder.length - 1) { L.fertig = true; wachHalten(false); }
+  else { L.pause = true; L.pauseSeit = Date.now(); }
+}
+
+function vibrieren() {
+  try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) { /* egal */ }
 }
 
 function eingabe(n) {
   const L = lauf;
-  if (!L || L.pause || L.fertig) return;
+  if (!L || L.pause || L.fertig || L.eingabe !== 'durchgang') return;
   L.aktuell.push(n);
-  try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) { /* egal */ }
-  if (L.aktuell.length >= L.durchgaenge) {
-    feldSpeichern(L);
-    if (L.idx >= L.felder.length - 1) { L.fertig = true; wachHalten(false); }
-    else { L.pause = true; L.pauseSeit = Date.now(); }
-  }
+  vibrieren();
+  if (L.aktuell.length >= L.durchgaenge) feldAbschliessen(L);
+  laufSpeichern();
+  render();
+}
+
+function dartEingabe(treffer) {
+  const L = lauf;
+  if (!L || L.pause || L.fertig || L.eingabe !== 'dart') return;
+  L.darts.push(treffer ? 1 : 0);
+  vibrieren();
+  if (L.darts.length >= L.durchgaenge * 3) feldAbschliessen(L);
+  laufSpeichern();
+  render();
+}
+
+function feldGesamt(n) {
+  const L = lauf;
+  if (!L || L.pause || L.fertig || L.eingabe !== 'feld') return;
+  if (!Number.isFinite(n) || n < 0 || n > L.durchgaenge * 3) { meldung(`Bitte eine Zahl von 0 bis ${L.durchgaenge * 3} eingeben.`); return; }
+  vibrieren();
+  feldAbschliessen(L, Math.round(n));
   laufSpeichern();
   render();
 }
@@ -861,8 +1022,8 @@ function weiter() {
 function rueckgaengig() {
   const L = lauf;
   if (!L) return;
-  if (!L.pause && !L.fertig && L.aktuell.length) {
-    L.aktuell.pop();
+  if (!L.pause && !L.fertig && offeneEingaben(L)) {
+    if (L.eingabe === 'dart') L.darts.pop(); else L.aktuell.pop();
   } else if (L.erledigt.length && !L.abgebrochen) {
     // Zurück in das zuletzt abgeschlossene Feld: gespeichertes Ergebnis wieder herausnehmen
     if (!L.pause && !L.fertig) L.idx--;
@@ -870,7 +1031,11 @@ function rueckgaengig() {
     const i = daten.trainings.findIndex(t => t.id === id);
     const rec = i >= 0 ? daten.trainings.splice(i, 1)[0] : null;
     if (rec) datenGeaendert();
-    L.aktuell = rec ? rec.treffer.slice(0, -1) : [];
+    L.aktuell = [];
+    L.darts = [];
+    if (rec && L.eingabe === 'dart' && rec.darts) L.darts = rec.darts.slice(0, -1);
+    else if (rec && L.eingabe === 'durchgang' && rec.treffer) L.aktuell = rec.treffer.slice(0, -1);
+    // Je Feld: zurück zur Eingabe der Gesamtzahl
     L.pause = false;
     if (L.fertig) { L.fertig = false; wachHalten(true); }
   } else return;
@@ -881,22 +1046,26 @@ function rueckgaengig() {
 async function trainingBeenden() {
   const L = lauf;
   if (!L) return;
-  const offen = L.aktuell.length;
+  const offen = L.pause ? 0 : offeneEingaben(L);
+  const voll = L.eingabe === 'dart' ? Math.floor(L.darts.length / 3) : L.aktuell.length;
   const fname = feldName(L.felder[L.idx]);
   let text = 'Training jetzt beenden?';
   if (L.erledigt.length) text += `\n\nAbgeschlossene Felder (${L.erledigt.length}) bleiben gespeichert.`;
   const knoepfe = [{ text: 'Weiterspielen', wert: null }];
-  if (offen && !L.pause) {
-    text += `\n\nAuf ${fname} sind erst ${offen} von ${L.durchgaenge} Durchgängen gespielt.`;
+  if (offen) {
+    text += L.eingabe === 'dart'
+      ? `\n\nAuf ${fname} sind erst ${L.darts.length} von ${L.durchgaenge * 3} Darts geworfen.` +
+        (voll * 3 < L.darts.length ? (voll ? `\nGespeichert werden nur die ${voll} vollständigen Durchgänge.` : '\nEin angefangener Durchgang kann nicht gespeichert werden.') : '')
+      : `\n\nAuf ${fname} sind erst ${offen} von ${L.durchgaenge} Durchgängen gespielt.`;
     knoepfe.push({ text: `${fname} verwerfen`, wert: 'verwerfen', art: 'gefahr' });
-    knoepfe.push({ text: `${fname} speichern`, wert: 'speichern', art: 'primaer' });
+    if (voll) knoepfe.push({ text: `${fname} speichern`, wert: 'speichern', art: 'primaer' });
   } else {
     knoepfe.push({ text: 'Beenden', wert: 'verwerfen', art: 'gefahr' });
   }
   const wahl = await dialog(text, knoepfe);
   if (!wahl) return;
-  if (wahl === 'speichern' && offen) feldSpeichern(L);
-  if (L.erledigt.length) { L.fertig = true; L.abgebrochen = true; L.pause = false; L.aktuell = []; }
+  if (wahl === 'speichern') feldSpeichern(L);
+  if (L.erledigt.length) { L.fertig = true; L.abgebrochen = true; L.pause = false; L.aktuell = []; L.darts = []; }
   else lauf = null;
   wachHalten(false);
   laufSpeichern();
@@ -913,7 +1082,11 @@ function datenAlsText() {
     `  "version": ${VERSION},\n` +
     `  "gespeichert": ${JSON.stringify(jetzt.toISOString())},\n` +
     '  "spieler": ' + liste(daten.spieler, s => JSON.stringify(s.versteckt ? { id: s.id, name: s.name, angelegt: s.angelegt, versteckt: true } : { id: s.id, name: s.name, angelegt: s.angelegt })) + ',\n' +
-    '  "trainings": ' + liste(daten.trainings, t => JSON.stringify({ id: t.id, runde: t.runde, spieler: t.spieler, feld: t.feld, datum: t.datum, treffer: t.treffer })) + '\n' +
+    '  "trainings": ' + liste(daten.trainings, t => {
+      const o = { id: t.id, runde: t.runde, spieler: t.spieler, feld: t.feld, datum: t.datum, eingabe: t.eingabe, durchgaenge: t.durchgaenge, gesamt: t.gesamt };
+      if (t.darts) o.darts = t.darts; else if (t.treffer) o.treffer = t.treffer;
+      return JSON.stringify(o);
+    }) + '\n' +
     '}\n';
   return [
     'Doppel 15 – Doppeltraining',
@@ -923,7 +1096,8 @@ function datenAlsText() {
     `Feld-Trainings: ${daten.trainings.length}`,
     '',
     'Diese Datei in Doppel 15 unter „Daten“ → „Aus txt-Datei laden“ wieder einlesen.',
-    'Bitte nicht von Hand ändern. Feld 25 = Bull, "treffer" = Treffer je Durchgang (3 Darts).',
+    'Bitte nicht von Hand ändern. Feld 25 = Bull. "gesamt" = Treffer aus "durchgaenge" × 3 Darts;',
+    '"treffer" = Treffer je Durchgang, "darts" = jeder Dart einzeln (1 = Treffer, 0 = daneben).',
     '',
     '----- DATEN -----',
     json
@@ -1267,10 +1441,19 @@ const aktionen = {
   dgPlus: () => setDg(einst.durchgaenge + 1),
   start: () => starten(),
   treffer: el => eingabe(Number(el.dataset.n)),
+  dart: el => dartEingabe(Number(el.dataset.n)),
+  feldGesamt: el => feldGesamt(Number(el.dataset.n)),
+  feldGesamtFeld: () => feldGesamt(parseInt(document.getElementById('gesamtZahl').value, 10)),
+  eingabeArt: el => {
+    if (!einst.spieler) return;
+    einst.eingabeJe = Object.assign({}, einst.eingabeJe, { [einst.spieler]: el.dataset.w });
+    einstSpeichern();
+    render();
+  },
   rueck: () => rueckgaengig(),
   weiter: () => weiter(),
   beenden: () => trainingBeenden(),
-  nochmal: () => starten({ spieler: lauf.spieler, felder: lauf.auswahl, durchgaenge: lauf.durchgaenge, reihenfolge: lauf.reihenfolge }),
+  nochmal: () => starten({ spieler: lauf.spieler, felder: lauf.auswahl, durchgaenge: lauf.durchgaenge, reihenfolge: lauf.reihenfolge, eingabe: lauf.eingabe }),
   neu: () => { lauf = null; laufSpeichern(); render(); window.scrollTo(0, 0); },
   spielerNeu: () => spielerNeu(),
   umbenennen: el => umbenennen(el.dataset.id),
@@ -1349,8 +1532,12 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'Backspace') { e.preventDefault(); rueckgaengig(); }
     return;
   }
-  if (/^[0-3]$/.test(e.key)) { e.preventDefault(); eingabe(Number(e.key)); }
-  else if (e.key === 'Backspace') { e.preventDefault(); rueckgaengig(); }
+  if (e.key === 'Backspace') { e.preventDefault(); rueckgaengig(); }
+  else if (lauf.eingabe === 'dart') {
+    if (e.key === '1' || e.key === '+') { e.preventDefault(); dartEingabe(1); }
+    else if (e.key === '0' || e.key === '-') { e.preventDefault(); dartEingabe(0); }
+  }
+  else if (lauf.eingabe === 'durchgang' && /^[0-3]$/.test(e.key)) { e.preventDefault(); eingabe(Number(e.key)); }
 });
 
 if (lauf && !lauf.fertig) wachHalten(true);
