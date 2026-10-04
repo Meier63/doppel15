@@ -178,6 +178,33 @@ td.b { width: 32%; }
 .kopfzeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .kopfzeile h2 { margin: 0; }
 
+/* Diagramme */
+.diagramm { width: 100%; margin: 4px 0 8px; }
+.diagramm svg { display: block; overflow: visible; }
+.diagramm text { font-family: inherit; }
+.diagramm .achse { fill: #8a968f; font-size: 12px; font-variant-numeric: tabular-nums; }
+.diagramm .achse.leer { fill: #4c5d54; }
+.diagramm .wert { fill: var(--text); font-size: 13px; font-weight: 700; }
+.diagramm .name { fill: var(--text); font-size: 15px; font-weight: 600; }
+.diagramm .gitter { stroke: #26322b; stroke-width: 1; }
+.diagramm .grundlinie { stroke: #3d4d44; stroke-width: 1; }
+.diagramm .linie { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.diagramm .punkt { stroke: var(--karte); stroke-width: 2; }
+.diagramm .treffer-flaeche { fill: transparent; }
+.diagramm .kreuz { stroke: #8a968f; stroke-width: 1; opacity: 0; }
+.diagramm .spalte:hover .kreuz, .diagramm .spalte:focus .kreuz { opacity: 1; }
+.diagramm .marke:hover path, .diagramm .marke:focus path { filter: brightness(1.25); }
+.diagramm g:focus { outline: none; }
+.diagramm g:focus-visible .treffer-flaeche { fill: rgba(255,255,255,.05); }
+.legende { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 8px; font-size: 15px; color: var(--text); }
+.legende i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.tip { position: fixed; z-index: 150; pointer-events: none; background: #0b100d; border: 1px solid var(--linie); border-radius: 10px;
+  padding: 8px 12px; font-size: 15px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: 260px; }
+.tip i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.tip span { color: var(--grau); }
+details.tabelle-auf { margin-top: 6px; }
+details.tabelle-auf summary { cursor: pointer; color: var(--grau); font-size: 15px; padding: 6px 0; }
+
 /* Spieler */
 .spieler-zeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--linie); }
 .spieler-zeile:last-child { border-bottom: 0; }
@@ -267,6 +294,7 @@ function normalisieren(o) {
     .map(s => {
       const sp = { id: String(s.id), name: s.name.trim() || '?', angelegt: s.angelegt || new Date().toISOString() };
       if (s.versteckt) sp.versteckt = true;   // aus der Auswahlliste entfernt, Daten bleiben
+      if (Number.isInteger(s.farbe)) sp.farbe = s.farbe;
       return sp;
     });
   const ids = new Set(spieler.map(s => s.id));
@@ -415,11 +443,14 @@ function renderNav() {
 
 function render() {
   renderNav();
+  diagramme = [];
+  tipAus();
   const main = document.getElementById('main');
   if (ansicht === 'training') main.innerHTML = lauf ? renderLauf() : renderEinrichtung();
   else if (ansicht === 'statistik') main.innerHTML = renderStatistik();
   else if (ansicht === 'spieler') main.innerHTML = renderSpieler();
   else main.innerHTML = renderDaten();
+  zeichneDiagramme();
 }
 
 function renderEinrichtung() {
@@ -606,6 +637,251 @@ function renderZusammenfassung() {
   return h;
 }
 
+// ---------- Diagramme ----------
+
+// Feste Farbe je Spieler (Platz 0–7, wird beim Anlegen vergeben und bleibt). Farbfolge auf
+// Farbsehschwäche geprüft (dunkler Hintergrund); mehr als 8 Spieler bekommen keine eigene Linie.
+const FARBEN = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+const MAX_PERIODEN = 40;
+
+function farbenZuweisen() {
+  const belegt = new Set();
+  for (const s of daten.spieler) {
+    if (Number.isInteger(s.farbe) && s.farbe >= 0 && s.farbe < FARBEN.length && !belegt.has(s.farbe)) belegt.add(s.farbe);
+    else delete s.farbe;
+  }
+  for (const s of daten.spieler) {
+    if (s.farbe !== undefined) continue;
+    for (let i = 0; i < FARBEN.length; i++) if (!belegt.has(i)) { s.farbe = i; belegt.add(i); break; }
+  }
+}
+const spielerFarbe = id => { const s = daten.spieler.find(x => x.id === id); return s && s.farbe !== undefined ? FARBEN[s.farbe] : null; };
+
+let diagramme = [];        // { id, zeichne(breite) } – werden nach dem Einfügen ins HTML gezeichnet
+function diagrammPlatz(zeichne) {
+  const id = 'dg' + diagramme.length;
+  diagramme.push({ id, zeichne });
+  return `<div class="diagramm" id="${id}"></div>`;
+}
+function zeichneDiagramme() {
+  for (const d of diagramme) {
+    const el = document.getElementById(d.id);
+    if (el) el.innerHTML = d.zeichne(Math.max(260, el.clientWidth));
+  }
+}
+let groesseTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(groesseTimer);
+  groesseTimer = setTimeout(() => { if (ansicht === 'statistik') zeichneDiagramme(); }, 150);
+});
+
+const pctKurz = q => Math.round(q * 100) + ' %';
+function skala(werte) {
+  const m = Math.max(0, ...werte);
+  const max = Math.min(1, Math.max(0.1, Math.ceil(m * 10 - 1e-9) / 10));
+  const schritt = max <= 0.5 ? 0.1 : 0.2;
+  const ticks = [];
+  for (let v = 0; v <= max + 1e-9; v += schritt) ticks.push(Math.round(v * 100) / 100);
+  if (ticks[ticks.length - 1] < max - 1e-9) ticks.push(max);
+  return { max: ticks[ticks.length - 1], ticks };
+}
+// Säule/Balken mit 4px gerundetem Ende, gerade an der Grundlinie
+function saeulePfad(x, y, b, h) {
+  const r = Math.min(4, b / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + b - r}Q${x + b},${y} ${x + b},${y + r}V${y + h}Z`;
+}
+function balkenPfad(x, y, b, h) {
+  const r = Math.min(4, h / 2, b);
+  return `M${x},${y}H${x + b - r}Q${x + b},${y} ${x + b},${y + r}V${y + h - r}Q${x + b},${y + h} ${x + b - r},${y + h}H${x}Z`;
+}
+// Tooltip-Zeilen: "farbe~wert~text" (farbe optional)
+const tipZeile = (farbe, wert, text) => [farbe || '', wert, text].join('~');
+const tipAttr = zeilen => `data-tip="${esc(zeilen.join('|'))}"`;
+
+function yAchse(s, links, rechts, y) {
+  return s.ticks.map(v => `<line class="gitter" x1="${links}" x2="${rechts}" y1="${y(v)}" y2="${y(v)}"/>
+    <text class="achse" x="${links - 6}" y="${y(v) + 4}" text-anchor="end">${pctKurz(v)}</text>`).join('');
+}
+
+// Quote je Feld: eine Reihe, Säulen D1 … Bull
+function saeulenSvg(w, werte, farbe) {
+  const H = 230, oben = 22, unten = 26, links = 42, rechts = 6;
+  const ph = H - oben - unten, pw = w - links - rechts;
+  const s = skala(werte.filter(v => v.q != null).map(v => v.q));
+  const y = q => oben + ph - (q / s.max) * ph;
+  const slot = pw / werte.length;
+  const bb = Math.max(4, Math.min(24, slot - 4));
+  const mitDaten = werte.filter(v => v.q != null);
+  const best = mitDaten.length >= 3 ? mitDaten.reduce((a, b) => (b.q > a.q ? b : a)) : null;
+  const schwach = mitDaten.length >= 3 ? mitDaten.reduce((a, b) => (b.q < a.q ? b : a)) : null;
+  const schrift = 12, zeichenBreite = 7.2;
+  // x-Beschriftung: Felder mit Daten zuerst, dann die übrigen – nur wo Platz ist
+  const belegt = [];
+  const passt = (x0, x1) => !belegt.some(([a, b]) => x0 < b + 3 && x1 > a - 3);
+  const zeigeNr = new Set();
+  [...werte.keys()].sort((a, b) => (werte[a].q == null) - (werte[b].q == null)).forEach(i => {
+    const mitte = links + i * slot + slot / 2, halb = (werte[i].kurz.length * zeichenBreite) / 2;
+    if (passt(mitte - halb, mitte + halb)) { belegt.push([mitte - halb, mitte + halb]); zeigeNr.add(i); }
+  });
+  // Wertlabel über bester/schwächster Säule nur, wenn keine Nachbarsäule hineinragt
+  const labelFrei = i => {
+    const halb = (pctKurz(werte[i].q).length * 7.5) / 2, mitte = links + i * slot + slot / 2, oberkante = y(werte[i].q) - 20;
+    return werte.every((v, j) => j === i || v.q == null || Math.abs(links + j * slot + slot / 2 - mitte) > halb + bb / 2 || y(v.q) > oberkante + 16);
+  };
+  let svg = yAchse(s, links, w - rechts, y);
+  svg += `<line class="grundlinie" x1="${links}" x2="${w - rechts}" y1="${oben + ph}" y2="${oben + ph}"/>`;
+  werte.forEach((v, i) => {
+    const x = links + i * slot;
+    const tip = v.q == null ? [tipZeile('', '–', v.lang), 'noch nicht gespielt'] : [tipZeile('', pct(v.q), v.lang), `${zahl(v.treffer)} von ${zahl(v.darts)} Darts`];
+    svg += `<g class="marke" tabindex="0" ${tipAttr(tip)}><rect class="treffer-flaeche" x="${x}" y="${oben}" width="${slot}" height="${ph + unten}"/>`;
+    if (v.q != null && v.q > 0) svg += `<path d="${saeulePfad(x + (slot - bb) / 2, y(v.q), bb, oben + ph - y(v.q))}" fill="${farbe}"/>`;
+    if (zeigeNr.has(i)) svg += `<text class="achse ${v.q == null ? 'leer' : ''}" x="${x + slot / 2}" y="${H - 8}" text-anchor="middle" font-size="${schrift}">${v.kurz}</text>`;
+    if ((v === best || v === schwach) && labelFrei(i)) {
+      svg += `<text class="wert" x="${x + slot / 2}" y="${y(v.q) - 6}" text-anchor="middle">${pctKurz(v.q)}</text>`;
+    }
+    svg += `</g>`;
+  });
+  return `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="Quote je Feld">${svg}</svg>`;
+}
+
+// Verlauf: eine Linie je Spieler (oder eine für die Auswahl)
+function linienSvg(w, perioden, serien) {
+  const n = perioden.length;
+  const H = 240, oben = 16, unten = 28, links = 42;
+  const ph = H - oben - unten;
+  const alle = serien.flatMap(se => se.werte.filter(Boolean).map(p => p.q));
+  const s = skala(alle);
+  const y = q => oben + ph - (q / s.max) * ph;
+  // Namen am Linienende nur bei höchstens 4 Reihen und ohne Überlappung
+  const enden = serien.map(se => {
+    let i = se.werte.length - 1;
+    while (i >= 0 && !se.werte[i]) i--;
+    return i < 0 ? null : { se, i, yy: y(se.werte[i].q) };
+  }).filter(Boolean).sort((a, b) => a.yy - b.yy);
+  const endLabels = serien.length <= 4 && enden.every((e, k) => !k || e.yy - enden[k - 1].yy >= 15);
+  const rechts = endLabels ? (serien.length > 1 ? 84 : 44) : 14;
+  const pw = w - links - rechts;
+  const x = i => links + (n === 1 ? pw / 2 : (i * pw) / (n - 1));
+  let svg = yAchse(s, links, w - rechts, y);
+  svg += `<line class="grundlinie" x1="${links}" x2="${w - rechts}" y1="${oben + ph}" y2="${oben + ph}"/>`;
+
+  // x-Beschriftung ausdünnen (mindestens ~64px Abstand), erste und letzte immer
+  const jede = Math.max(1, Math.ceil(64 / (n > 1 ? pw / (n - 1) : pw)));
+  perioden.forEach((p, i) => {
+    if (i % jede && i !== n - 1) return;
+    if (i !== n - 1 && n - 1 - i < jede && n > 1) return;
+    svg += `<text class="achse" x="${x(i)}" y="${H - 8}" text-anchor="${n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${p.kurz}</text>`;
+  });
+
+  // Linien (bei Lücken unterbrochen), bei einer Reihe mit leichter Fläche
+  for (const se of serien) {
+    let teil = [];
+    const teile = [];
+    se.werte.forEach((p, i) => { if (p) teil.push([x(i), y(p.q)]); else if (teil.length) { teile.push(teil); teil = []; } });
+    if (teil.length) teile.push(teil);
+    for (const t of teile) {
+      const d = t.map((pt, i) => (i ? 'L' : 'M') + pt[0].toFixed(1) + ',' + pt[1].toFixed(1)).join('');
+      if (serien.length === 1 && t.length > 1) {
+        svg += `<path d="${d}L${t[t.length - 1][0].toFixed(1)},${oben + ph}L${t[0][0].toFixed(1)},${oben + ph}Z" fill="${se.farbe}" opacity=".12"/>`;
+      }
+      if (t.length > 1) svg += `<path class="linie" d="${d}" stroke="${se.farbe}"/>`;
+    }
+  }
+  // Punkte mit Ring in Hintergrundfarbe
+  if (n <= MAX_PERIODEN) {
+    for (const se of serien) se.werte.forEach((p, i) => {
+      if (p) svg += `<circle class="punkt" cx="${x(i)}" cy="${y(p.q)}" r="4" fill="${se.farbe}"/>`;
+    });
+  }
+  // Namen am Linienende (nur wenn sie sich nicht überlappen)
+  if (endLabels) {
+    for (const e of enden) {
+      const xe = x(e.i) + 9;
+      svg += `<text class="wert" x="${xe}" y="${e.yy + 4}">${serien.length > 1 ? esc(kuerzen(e.se.name, 8)) + ' ' : ''}${pctKurz(e.se.werte[e.i].q)}</text>`;
+    }
+  }
+  // Fadenkreuz: ganze Spalte ist Trefferfläche, Tooltip zeigt alle Reihen
+  perioden.forEach((p, i) => {
+    const x0 = n === 1 ? links : i === 0 ? links : (x(i - 1) + x(i)) / 2;
+    const x1 = n === 1 ? w - rechts : i === n - 1 ? w - rechts : (x(i) + x(i + 1)) / 2;
+    const zeilen = [tipZeile('', p.lang, '')].concat(serien.map(se => {
+      const v = se.werte[i];
+      return tipZeile(se.farbe, v ? pct(v.q) : '–', serien.length > 1 ? `${se.name}${v ? ` · ${zahl(v.treffer)}/${zahl(v.darts)}` : ''}` : (v ? `${zahl(v.treffer)} von ${zahl(v.darts)} Darts` : ''));
+    }));
+    svg += `<g class="spalte" tabindex="0" ${tipAttr(zeilen)}><rect class="treffer-flaeche" x="${x0}" y="${oben}" width="${Math.max(1, x1 - x0)}" height="${ph}"/>
+      <line class="kreuz" x1="${x(i)}" x2="${x(i)}" y1="${oben}" y2="${oben + ph}"/></g>`;
+  });
+  return `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="Verlauf der Quote">${svg}</svg>`;
+}
+
+// Spielervergleich: waagerechte Balken, Wert am Balkenende
+function balkenSvg(w, zeilen) {
+  const zeile = 38, dicke = 20, links = Math.min(130, Math.round(w * 0.32)), rechts = 96;
+  const H = zeilen.length * zeile + 8;
+  const pw = w - links - rechts;
+  const s = skala(zeilen.map(z => z.q));
+  let svg = `<line class="grundlinie" x1="${links}" x2="${links}" y1="4" y2="${H - 4}"/>`;
+  zeilen.forEach((z, i) => {
+    const y0 = 4 + i * zeile, yb = y0 + (zeile - dicke) / 2;
+    const b = Math.max(1, (z.q / s.max) * pw);
+    svg += `<g class="marke" tabindex="0" ${tipAttr([tipZeile(z.farbe, pct(z.q), z.name), `${zahl(z.treffer)} Treffer aus ${zahl(z.darts)} Darts`])}>
+      <rect class="treffer-flaeche" x="0" y="${y0}" width="${w}" height="${zeile}"/>
+      <text class="name" x="${links - 10}" y="${y0 + zeile / 2 + 5}" text-anchor="end">${esc(kuerzen(z.name, Math.max(6, Math.floor(links / 10))))}</text>
+      <path d="${balkenPfad(links, yb, b, dicke)}" fill="${z.farbe || '#6f7d76'}"/>
+      <text class="wert" x="${links + b + 8}" y="${y0 + zeile / 2 + 5}">${pct(z.q)} <tspan class="achse">${zahl(z.treffer)}/${zahl(z.darts)}</tspan></text></g>`;
+  });
+  return `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="Spielervergleich">${svg}</svg>`;
+}
+
+const kuerzen = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
+
+function legende(serien) {
+  return `<div class="legende">${serien.map(se =>
+    `<span><i style="background:${se.farbe}"></i>${esc(se.name)}</span>`).join('')}</div>`;
+}
+
+// Tooltip (Inhalt nur per textContent)
+const tip = document.createElement('div');
+tip.className = 'tip';
+tip.setAttribute('role', 'tooltip');
+tip.hidden = true;
+document.body.appendChild(tip);
+function tipZeigen(el, px, py) {
+  tip.replaceChildren();
+  for (const z of el.dataset.tip.split('|')) {
+    const teile = z.split('~');
+    const [farbe, wert, text] = teile.length === 1 ? ['', '', z] : teile;   // Zeile ohne ~ = reiner Text
+    const r = document.createElement('div');
+    if (farbe) { const k = document.createElement('i'); k.style.background = farbe; r.appendChild(k); }
+    if (wert) { const b = document.createElement('b'); b.textContent = wert; r.appendChild(b); }
+    if (text) { const t = document.createElement('span'); t.textContent = ' ' + text; r.appendChild(t); }
+    tip.appendChild(r);
+  }
+  tip.hidden = false;
+  const tb = tip.getBoundingClientRect();
+  let x = px + 14, y = py + 14;
+  if (x + tb.width > innerWidth - 8) x = px - tb.width - 14;
+  if (y + tb.height > innerHeight - 8) y = py - tb.height - 14;
+  tip.style.left = Math.max(8, x) + 'px';
+  tip.style.top = Math.max(8, y) + 'px';
+}
+const tipAus = () => { tip.hidden = true; };
+function tipBeiZeiger(e) {
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (el) tipZeigen(el, e.clientX, e.clientY); else tipAus();
+}
+document.addEventListener('pointermove', tipBeiZeiger);
+document.addEventListener('pointerdown', tipBeiZeiger);
+document.addEventListener('focusin', e => {
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (!el) return tipAus();
+  const r = el.getBoundingClientRect();
+  tipZeigen(el, r.left + r.width / 2, r.top + r.height / 3);
+});
+document.addEventListener('focusout', tipAus);
+window.addEventListener('scroll', tipAus, { passive: true });
+
 // ---------- Statistik ----------
 
 function zeitraumGrenzen() {
@@ -637,10 +913,10 @@ function isoWoche(d) {
 
 function gruppe(d) {
   switch (statF.gruppe) {
-    case 'woche': { const w = isoWoche(d); return [`${w.jahr}-${pad(w.kw)}`, `KW ${w.kw} / ${w.jahr}`]; }
-    case 'monat': return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}`, `${MONATE[d.getMonth()]} ${d.getFullYear()}`];
-    case 'jahr': return [String(d.getFullYear()), String(d.getFullYear())];
-    default: return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, `${WOCHENTAGE[d.getDay()]} ${fmtDatum(d)}`];
+    case 'woche': { const w = isoWoche(d); return [`${w.jahr}-${pad(w.kw)}`, `KW ${w.kw} / ${w.jahr}`, `KW ${w.kw}`]; }
+    case 'monat': return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}`, `${MONATE[d.getMonth()]} ${d.getFullYear()}`, `${MONATE_KURZ[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`];
+    case 'jahr': return [String(d.getFullYear()), String(d.getFullYear()), String(d.getFullYear())];
+    default: return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, `${WOCHENTAGE[d.getDay()]} ${fmtDatum(d)}`, `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`];
   }
 }
 
@@ -706,44 +982,61 @@ function renderStatistik() {
   }
 
   // Je Feld
+  const farbeAuswahl = statF.spieler === 'alle' ? FARBEN[0] : (spielerFarbe(statF.spieler) || FARBEN[0]);
   let felder = FELDER.map(f => ({ f, ...summe(liste.filter(t => t.feld === f)) }));
   if (statF.sort === 'quote') felder.sort((a, b) => (b.quote ?? -1) - (a.quote ?? -1));
-  h += `<section class="karte"><div class="kopfzeile"><h2>Je Feld</h2>
+  const saeulen = felder.map(x => ({ kurz: x.f === 25 ? 'B' : String(x.f), lang: feldName(x.f), q: x.dg ? x.quote : null, treffer: x.treffer, darts: x.darts }));
+  h += `<section class="karte"><div class="kopfzeile"><h2>Quote je Feld</h2>
       ${segment('statSort', statF.sort, [['feld', 'nach Feld'], ['quote', 'nach Quote']])}</div>
-    <div class="tabelle"><table>
+    ${diagrammPlatz(w => saeulenSvg(w, saeulen, farbeAuswahl))}
+    <details class="tabelle-auf"><summary>Als Tabelle</summary><div class="tabelle"><table>
       <tr><th>Feld</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
       ${felder.map(x => `<tr class="${x.dg ? '' : 'leer'}"><td class="feldname">${feldName(x.f)}</td>
         <td class="z">${x.dg ? zahl(x.darts) : '–'}</td><td class="z">${x.dg ? zahl(x.treffer) : '–'}</td>
         <td class="z">${pct(x.quote)}</td><td class="b">${balken(x.quote)}</td></tr>`).join('')}
-    </table></div></section>`;
+    </table></div></details></section>`;
 
   // Verlauf
   const grp = new Map();
   for (const t of liste) {
-    const [k, label] = gruppe(new Date(t.datum));
-    if (!grp.has(k)) grp.set(k, { label, liste: [] });
+    const [k, label, kurz] = gruppe(new Date(t.datum));
+    if (!grp.has(k)) grp.set(k, { label, kurz, liste: [] });
     grp.get(k).liste.push(t);
   }
   const zeilen = [...grp.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  h += `<section class="karte"><div class="kopfzeile"><h2>Verlauf</h2>
+  const perioden = zeilen.slice(0, MAX_PERIODEN).reverse().map(([, g]) => ({ lang: g.label, kurz: g.kurz, liste: g.liste }));
+  const punkt = l => { const x = summe(l); return x.dg ? { q: x.quote, treffer: x.treffer, darts: x.darts } : null; };
+  let serien, ohneFarbe = 0;
+  const mitDaten = statF.spieler === 'alle' ? daten.spieler.filter(sp => liste.some(t => t.spieler === sp.id)) : [];
+  if (mitDaten.length > 1) {
+    serien = mitDaten.filter(sp => spielerFarbe(sp.id)).map(sp => ({
+      name: sp.name, farbe: spielerFarbe(sp.id), werte: perioden.map(p => punkt(p.liste.filter(t => t.spieler === sp.id)))
+    }));
+    ohneFarbe = mitDaten.length - serien.length;
+  } else {
+    const sp = statF.spieler !== 'alle' ? statF.spieler : (mitDaten[0] && mitDaten[0].id);
+    serien = [{ name: sp ? spielerName(sp) : 'Alle', farbe: (sp && spielerFarbe(sp)) || FARBEN[0], werte: perioden.map(p => punkt(p.liste)) }];
+  }
+  h += `<section class="karte"><div class="kopfzeile"><h2>Verlauf der Quote</h2>
       ${segment('statGruppe', statF.gruppe, [['tag', 'Tag'], ['woche', 'Woche'], ['monat', 'Monat'], ['jahr', 'Jahr']])}</div>
-    <div class="tabelle"><table>
+    ${serien.length > 1 ? legende(serien) : ''}
+    ${diagrammPlatz(w => linienSvg(w, perioden, serien))}
+    ${zeilen.length > MAX_PERIODEN ? `<p class="hinweis">Gezeigt: die letzten ${MAX_PERIODEN} Zeiträume. Für mehr „Woche“ oder „Monat“ wählen.</p>` : ''}
+    ${ohneFarbe ? `<p class="hinweis">${ohneFarbe} weitere Spieler ohne eigene Linie (höchstens 8) – oben einzeln auswählen.</p>` : ''}
+    <details class="tabelle-auf"><summary>Als Tabelle</summary><div class="tabelle"><table>
       <tr><th>Zeitraum</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
       ${zeilen.map(([, g]) => { const x = summe(g.liste); return `<tr><td>${g.label}</td>
         <td class="z">${zahl(x.darts)}</td><td class="z">${zahl(x.treffer)}</td><td class="z">${pct(x.quote)}</td>
         <td class="b">${balken(x.quote)}</td></tr>`; }).join('')}
-    </table></div></section>`;
+    </table></div></details></section>`;
 
   // Spielervergleich
   if (statF.spieler === 'alle') {
-    const proSpieler = daten.spieler.map(sp => ({ sp, ...summe(liste.filter(t => t.spieler === sp.id)) }))
-      .filter(x => x.dg).sort((a, b) => b.quote - a.quote);
+    const proSpieler = daten.spieler.map(sp => ({ name: sp.name, farbe: spielerFarbe(sp.id), ...summe(liste.filter(t => t.spieler === sp.id)) }))
+      .filter(x => x.dg).sort((a, b) => b.quote - a.quote).map(x => ({ ...x, q: x.quote }));
     if (proSpieler.length > 1) {
-      h += `<section class="karte"><h2>Spielervergleich</h2><div class="tabelle"><table>
-        <tr><th>Spieler</th><th class="z">Darts</th><th class="z">Treffer</th><th class="z">Quote</th><th></th></tr>
-        ${proSpieler.map(x => `<tr><td class="feldname">${esc(x.sp.name)}</td><td class="z">${zahl(x.darts)}</td>
-          <td class="z">${zahl(x.treffer)}</td><td class="z">${pct(x.quote)}</td><td class="b">${balken(x.quote)}</td></tr>`).join('')}
-      </table></div></section>`;
+      h += `<section class="karte"><h2>Spielervergleich</h2>
+        ${diagrammPlatz(w => balkenSvg(w, proSpieler))}</section>`;
     }
   }
 
@@ -842,6 +1135,7 @@ async function spielerNeu() {
 
   const sp = { id: neueId(), name, angelegt: new Date().toISOString() };
   daten.spieler.push(sp);
+  farbenZuweisen();
   datenGeaendert();
   spielerWaehlen(sp, `${name} angelegt.`);
   const neu = document.getElementById('neuName');
@@ -1081,7 +1375,11 @@ function datenAlsText() {
     '  "app": "Doppel 15",\n' +
     `  "version": ${VERSION},\n` +
     `  "gespeichert": ${JSON.stringify(jetzt.toISOString())},\n` +
-    '  "spieler": ' + liste(daten.spieler, s => JSON.stringify(s.versteckt ? { id: s.id, name: s.name, angelegt: s.angelegt, versteckt: true } : { id: s.id, name: s.name, angelegt: s.angelegt })) + ',\n' +
+    '  "spieler": ' + liste(daten.spieler, s => {
+      const o = { id: s.id, name: s.name, angelegt: s.angelegt, farbe: s.farbe };
+      if (s.versteckt) o.versteckt = true;
+      return JSON.stringify(o);
+    }) + ',\n' +
     '  "trainings": ' + liste(daten.trainings, t => {
       const o = { id: t.id, runde: t.runde, spieler: t.spieler, feld: t.feld, datum: t.datum, eingabe: t.eingabe, durchgaenge: t.durchgaenge, gesamt: t.gesamt };
       if (t.darts) o.darts = t.darts; else if (t.treffer) o.treffer = t.treffer;
@@ -1340,6 +1638,8 @@ async function textEinlesen(text, name) {
     if (nurHier) { meta.ungesichert = true; lsSchreiben(LS.meta, meta); } else gesichert(name);
     meldung(`${dazu} Feld-Trainings hinzugefügt.`);
   }
+  farbenZuweisen();
+  lsSchreiben(LS.daten, daten);
   if (ordner && meta.autoOrdner && ordnerRecht === 'granted' && meta.ungesichert) {
     schreibKette = schreibKette.then(() => inOrdnerSchreiben(true));
   }
@@ -1540,6 +1840,8 @@ document.addEventListener('keydown', e => {
   else if (lauf.eingabe === 'durchgang' && /^[0-3]$/.test(e.key)) { e.preventDefault(); eingabe(Number(e.key)); }
 });
 
+farbenZuweisen();
+lsSchreiben(LS.daten, daten);
 if (lauf && !lauf.fertig) wachHalten(true);
 render();
 ordnerInit();
